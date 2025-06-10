@@ -1,0 +1,71 @@
+# Task ID: 15
+# Title: Create Documentation and CI/CD Pipeline
+# Status: pending
+# Dependencies: 14
+# Priority: medium
+# Description: Write comprehensive documentation including README, API docs, deployment guides, and set up CI/CD pipeline for automated testing and releases
+# Details:
+Create documentation:
+```markdown
+# README.md
+# Harbor Registry Replicator
+
+## Overview
+Harbor Registry Replicator synchronizes robot accounts and OIDC groups...
+
+## Quick Start
+### Docker
+```bash
+docker-compose up -d
+```
+
+### Kubernetes
+```bash
+kubectl apply -f deployments/kubernetes/
+```
+
+## Configuration
+[Detailed configuration guide]
+
+## Monitoring
+[Metrics and alerting setup]
+```
+
+Create CI/CD pipeline (.github/workflows/ci.yaml):
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    - run: make test
+    - run: make lint
+    - run: make build
+    
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      harbor:
+        image: goharbor/harbor-core:latest
+    steps:
+    - run: make integration-test
+    
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+    - run: make docker-build
+    - run: make docker-push
+```
+
+# Test Strategy:
+Verify documentation is accurate and complete, test all code examples work, ensure CI/CD pipeline catches failures, test release process creates proper artifacts

@@ -1,0 +1,200 @@
+# Harbor Replicator Configuration
+# Complete configuration example with all available options
+
+# Harbor Instance Configuration
+harbor:
+  # Source Harbor instance (where data is replicated FROM)
+  source:
+    name: "source-harbor"
+    url: "${HARBOR_SOURCE_URL:-http://harbor-source.example.com}"
+    username: "${HARBOR_SOURCE_USERNAME:-admin}"
+    password: "${HARBOR_SOURCE_PASSWORD:-Harbor12345}"
+    insecure: false
+    timeout: 30s
+    
+    # Rate limiting configuration
+    rate_limit:
+      requests_per_second: 10.0
+      burst_size: 20
+      timeout: 5s
+    
+    # Circuit breaker configuration
+    circuit_breaker:
+      enabled: true
+      max_requests: 10
+      interval: 60s
+      timeout: 60s
+      failure_threshold: 5
+      success_threshold: 2
+    
+    # Retry configuration
+    retry:
+      max_attempts: 3
+      initial_delay: 1s
+      max_delay: 30s
+      multiplier: 2.0
+      jitter: true
+      retryable_errors:
+        - "connection reset by peer"
+        - "timeout"
+        - "temporary failure"
+
+  # Target Harbor instances (where data is replicated TO)
+  targets:
+    - name: "target-harbor-prod"
+      url: "${HARBOR_TARGET_PROD_URL:-http://harbor-prod.example.com}"
+      username: "${HARBOR_TARGET_PROD_USERNAME:-admin}"
+      password: "${HARBOR_TARGET_PROD_PASSWORD:-Harbor12345}"
+      insecure: false
+      timeout: 30s
+      
+    - name: "target-harbor-staging"
+      url: "${HARBOR_TARGET_STAGING_URL:-http://harbor-staging.example.com}"
+      username: "${HARBOR_TARGET_STAGING_USERNAME:-admin}"
+      password: "${HARBOR_TARGET_STAGING_PASSWORD:-Harbor12345}"
+      insecure: false
+      timeout: 30s
+
+# Synchronization Configuration
+sync:
+  # How often to run synchronization
+  interval: 10m
+  
+  # Number of concurrent synchronization operations
+  concurrency: 5
+  
+  # Dry run mode - don't make actual changes
+  dry_run: false
+  
+  # Resource synchronization settings
+  resources:
+    robot_accounts:
+      enabled: true
+      system_level:
+        enabled: true
+        name_filter: 
+          - "replicator-*"
+          - "automation-*"
+        exclude:
+          - "system-internal-*"
+      project_level:
+        enabled: true
+        project_filter:
+          - "production-*"
+          - "staging-*"
+        name_filter:
+          - "deploy-*"
+          - "ci-*"
+        exclude:
+          - "temp-*"
+    
+    oidc_groups:
+      enabled: true
+      group_filter:
+        - "harbor-*"
+        - "developers"
+      exclude:
+        - "harbor-admins"
+      sync_permissions: true
+      sync_project_associations: true
+  
+  # Conflict resolution strategy
+  conflict_resolution:
+    strategy: "source_wins"  # source_wins, target_wins, manual, skip
+    backup_before: true
+  
+  # Filtering configuration
+  filters:
+    include_patterns:
+      - "prod-*"
+      - "staging-*"
+    exclude_patterns:
+      - "temp-*"
+      - "test-*"
+
+# Logging Configuration
+logging:
+  level: "info"  # debug, info, warn, error, fatal
+  format: "json"  # json, console
+  output: 
+    - "stdout"
+    - "file"
+  file_path: "${LOG_FILE_PATH:-/var/log/harbor-replicator/app.log}"
+  max_size: 100  # MB
+  max_backups: 5
+  max_age: 30  # days
+  compress: true
+  sanitize_fields:
+    - "password"
+    - "token"
+    - "secret"
+    - "key"
+  correlation_id:
+    enabled: true
+    header: "X-Correlation-ID"
+    field_name: "correlation_id"
+    generator: "uuid"  # uuid, random, sequential
+
+# Monitoring and Metrics Configuration
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    path: "/metrics"
+    port: 9090
+    namespace: "harbor_replicator"
+    subsystem: "sync"
+  
+  health:
+    enabled: true
+    path: "/health"
+    port: 8080
+    ready_path: "/ready"
+    live_path: "/live"
+
+# HTTP Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  shutdown_timeout: 10s
+  
+  tls:
+    enabled: false
+    cert_file: "${TLS_CERT_FILE:-/etc/ssl/certs/server.crt}"
+    key_file: "${TLS_KEY_FILE:-/etc/ssl/private/server.key}"
+
+# State Management Configuration
+state_manager:
+  storage_type: "file"  # file, redis, etcd
+  file_path: "${STATE_FILE_PATH:-./state/replicator-state.json}"
+  backup_interval: 1h
+  backup_retention: 24
+  
+  # Redis configuration (when storage_type is "redis")
+  redis:
+    address: "${REDIS_ADDRESS:-localhost:6379}"
+    password: "${REDIS_PASSWORD}"
+    db: 0
+    max_retries: 3
+    dial_timeout: 5s
+    read_timeout: 3s
+    write_timeout: 3s
+    pool_size: 10
+    min_idle_conns: 5
+  
+  # Etcd configuration (when storage_type is "etcd")
+  etcd:
+    endpoints:
+      - "${ETCD_ENDPOINT_1:-localhost:2379}"
+      - "${ETCD_ENDPOINT_2:-localhost:2380}"
+    username: "${ETCD_USERNAME}"
+    password: "${ETCD_PASSWORD}"
+    dial_timeout: 5s
+    tls:
+      enabled: false
+      cert_file: "${ETCD_TLS_CERT_FILE}"
+      key_file: "${ETCD_TLS_KEY_FILE}"

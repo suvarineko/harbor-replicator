@@ -1,0 +1,52 @@
+# Task ID: 14
+# Title: Implement Integration Tests
+# Status: pending
+# Dependencies: 5, 6, 7
+# Priority: high
+# Description: Create comprehensive integration tests that verify end-to-end synchronization flows against real Harbor instances
+# Details:
+```go
+// test/integration/sync_test.go
+func TestFullSynchronizationFlow(t *testing.T) {
+    // Setup test Harbor instances using testcontainers
+    ctx := context.Background()
+    
+    localHarbor := setupTestHarbor(t, "local")
+    remoteHarbor := setupTestHarbor(t, "remote")
+    
+    // Create test resources in remote Harbor
+    remoteClient := createTestClient(remoteHarbor)
+    testRobot := createTestRobotAccount(t, remoteClient)
+    testGroup := createTestOIDCGroup(t, remoteClient)
+    
+    // Configure and start replicator
+    config := &config.Config{
+        LocalHarbor: getHarborConfig(localHarbor),
+        RemoteHarbors: []config.RemoteHarborConfig{
+            getHarborConfig(remoteHarbor),
+        },
+    }
+    
+    engine := setupSyncEngine(t, config)
+    require.NoError(t, engine.Start(ctx))
+    
+    // Wait for sync to complete
+    time.Sleep(5 * time.Second)
+    
+    // Verify resources exist in local Harbor
+    localClient := createTestClient(localHarbor)
+    
+    robots, err := localClient.ListSystemRobotAccounts(ctx)
+    require.NoError(t, err)
+    assert.Contains(t, getRobotNames(robots), testRobot.Name)
+    
+    groups, err := localClient.ListOIDCGroups(ctx)
+    require.NoError(t, err)
+    assert.Contains(t, getGroupNames(groups), testGroup.Name)
+}
+```
+
+Create performance tests to verify sync completes within SLA for 1000+ resources
+
+# Test Strategy:
+Run integration tests in CI/CD pipeline, use testcontainers for Harbor instances, measure sync performance metrics, test failure scenarios and recovery

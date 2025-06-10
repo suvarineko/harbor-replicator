@@ -1,0 +1,105 @@
+# Task ID: 5
+# Title: Build Robot Account Synchronization
+# Status: pending
+# Dependencies: 3, 4
+# Priority: high
+# Description: Implement synchronization logic for both system-wide and project-specific robot accounts with conflict resolution
+# Details:
+```go
+// internal/sync/robot_accounts.go
+type RobotAccountSynchronizer struct {
+    localClient *harbor.HarborClient
+    remoteClients map[string]*harbor.HarborClient
+    stateManager *state.StateManager
+    logger *zap.Logger
+}
+
+func (s *RobotAccountSynchronizer) SyncSystemRobots(ctx context.Context, source string) error {
+    remoteRobots, err := s.remoteClients[source].ListSystemRobotAccounts(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list remote robots: %w", err)
+    }
+    
+    localRobots, err := s.localClient.ListSystemRobotAccounts(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list local robots: %w", err)
+    }
+    
+    // Create name-based index
+    localIndex := make(map[string]*model.Robot)
+    for _, robot := range localRobots {
+        localIndex[robot.Name] = robot
+    }
+    
+    for _, remoteRobot := range remoteRobots {
+        if localRobot, exists := localIndex[remoteRobot.Name]; exists {
+            // Update if different
+            if !s.robotsEqual(remoteRobot, localRobot) {
+                if err := s.updateRobot(ctx, remoteRobot); err != nil {
+                    s.logger.Error("failed to update robot", zap.Error(err))
+                }
+            }
+        } else {
+            // Create new
+            if err := s.createRobot(ctx, remoteRobot); err != nil {
+                s.logger.Error("failed to create robot", zap.Error(err))
+            }
+        }
+    }
+    
+    return nil
+}
+```
+
+# Test Strategy:
+Test robot creation, updates, and conflict resolution. Mock scenarios with matching names but different permissions. Test error handling for partial failures
+
+# Subtasks:
+## 1. Define Robot Account Models and Interfaces [pending]
+### Dependencies: None
+### Description: Create comprehensive data models for robot accounts including system-wide and project-specific types, along with interfaces for synchronization operations
+### Details:
+Define Robot struct with fields for ID, Name, Description, Type (system/project), ProjectID, Permissions, Secret, CreationTime, ExpirationTime, and Disabled status. Create RobotSynchronizer interface with methods for listing, creating, updating, and deleting robots. Include RobotFilter struct for pattern-based filtering with name patterns, project patterns, and type filters.
+
+## 2. Implement Secure Token and Secret Management [pending]
+### Dependencies: 5.1
+### Description: Build secure handling for robot account tokens and secrets including encryption, storage, and retrieval mechanisms
+### Details:
+Create SecretManager component that encrypts robot secrets before storage using AES-256, stores encrypted secrets in state manager with metadata, provides secure retrieval with decryption, and implements secret rotation capabilities. Include methods for generating new secrets, validating existing ones, and securely comparing secrets without exposing them in logs.
+
+## 3. Build Robot Account Comparison and Conflict Detection [pending]
+### Dependencies: 5.1
+### Description: Implement logic to compare robot accounts between instances and detect conflicts based on names and permissions
+### Details:
+Create robotsEqual method that compares all relevant fields except secrets and timestamps. Implement conflict detection that identifies robots with same name but different permissions, same name in different projects, or overlapping permission scopes. Build RobotConflict struct to capture conflict details including conflicting robots, conflict type, and suggested resolution.
+
+## 4. Implement System-Wide Robot Account Synchronization [pending]
+### Dependencies: 5.1, 5.2, 5.3
+### Description: Complete the system-wide robot account synchronization logic with proper error handling and state tracking
+### Details:
+Enhance the existing SyncSystemRobots method to handle robot creation with secure secret management, update existing robots while preserving secrets unless explicitly changed, track synchronization state for each robot, and implement batch operations for efficiency. Add support for dry-run mode to preview changes before applying them.
+
+## 5. Implement Project-Specific Robot Account Synchronization [pending]
+### Dependencies: 5.1, 5.2, 5.3
+### Description: Build synchronization logic for project-specific robot accounts with project context awareness
+### Details:
+Create SyncProjectRobots method that synchronizes robots within specific project contexts, handles project ID mapping between instances, ensures project exists before creating project robots, and maintains project-robot associations. Include logic to handle robots that reference non-existent projects and options to create missing projects or skip those robots.
+
+## 6. Build Filtering and Selection Logic [pending]
+### Dependencies: 5.1
+### Description: Implement pattern-based filtering for selective robot account synchronization
+### Details:
+Create RobotFilter implementation supporting glob patterns for robot names, regex patterns for advanced matching, project-based filtering, permission-based filtering, and exclusion patterns. Build ApplyFilter method that processes robot lists through configured filters and returns filtered results with filter match details.
+
+## 7. Implement Conflict Resolution Strategies [pending]
+### Dependencies: 5.3, 5.4, 5.5
+### Description: Build configurable conflict resolution strategies for handling robot account conflicts during synchronization
+### Details:
+Create ConflictResolver with strategies including 'source-wins' (remote robot takes precedence), 'target-wins' (local robot preserved), 'merge-permissions' (combine permission sets), 'rename-duplicate' (append suffix to conflicting names), and 'interactive' (prompt for user decision). Implement strategy selection based on configuration and conflict type.
+
+## 8. Add Monitoring and Reporting for Robot Synchronization [pending]
+### Dependencies: 5.4, 5.5, 5.6, 5.7
+### Description: Implement comprehensive monitoring, logging, and reporting for robot account synchronization operations
+### Details:
+Create RobotSyncReport struct capturing robots created/updated/skipped, conflicts encountered and resolutions, secrets rotated, and errors encountered. Implement detailed logging with structured fields for robot names, projects, and operations. Add metrics collection for sync duration, robot counts by type, and conflict resolution outcomes. Build report generation in multiple formats (JSON, table, summary).
+

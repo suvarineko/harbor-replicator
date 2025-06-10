@@ -1,0 +1,94 @@
+# Task ID: 10
+# Title: Implement Structured Logging
+# Status: pending
+# Dependencies: 1, 2
+# Priority: medium
+# Description: Set up structured logging using zap with proper log levels, JSON formatting, and contextual information
+# Details:
+```go
+// internal/logging/logger.go
+func NewLogger(config config.LoggingConfig) (*zap.Logger, error) {
+    var zapConfig zap.Config
+    
+    switch config.Level {
+    case "debug":
+        zapConfig = zap.NewDevelopmentConfig()
+    case "info", "warn", "error":
+        zapConfig = zap.NewProductionConfig()
+        zapConfig.Level = zap.NewAtomicLevelAt(getZapLevel(config.Level))
+    default:
+        return nil, fmt.Errorf("invalid log level: %s", config.Level)
+    }
+    
+    if config.Format == "json" {
+        zapConfig.Encoding = "json"
+    } else {
+        zapConfig.Encoding = "console"
+    }
+    
+    // Never log sensitive information
+    zapConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+    
+    logger, err := zapConfig.Build(
+        zap.AddCaller(),
+        zap.AddStacktrace(zapcore.ErrorLevel),
+    )
+    if err != nil {
+        return nil, err
+    }
+    
+    return logger, nil
+}
+
+// Wrapper to ensure no sensitive data is logged
+func SafeLog(logger *zap.Logger, msg string, fields ...zap.Field) {
+    sanitizedFields := make([]zap.Field, 0, len(fields))
+    for _, field := range fields {
+        if !isSensitiveField(field.Key) {
+            sanitizedFields = append(sanitizedFields, field)
+        }
+    }
+    logger.Info(msg, sanitizedFields...)
+}
+```
+
+# Test Strategy:
+Verify log levels work correctly, test JSON and console output formats, ensure sensitive data (passwords, tokens) are never logged, test correlation ID propagation
+
+# Subtasks:
+## 1. Create Logger Configuration Structure [pending]
+### Dependencies: None
+### Description: Define configuration structures for the logging system including log levels, output formats, and sampling configurations
+### Details:
+Create a config package with LoggingConfig struct containing fields for Level (debug/info/warn/error), Format (json/console), OutputPath (stdout/file path), ErrorOutputPath, Sampling configuration (initial, thereafter), and MaxSize/MaxBackups for log rotation. Include validation methods to ensure configuration values are valid.
+
+## 2. Implement Core Logger Factory [pending]
+### Dependencies: 10.1
+### Description: Create the NewLogger function that builds zap logger instances based on configuration with proper encoding, level settings, and core options
+### Details:
+Implement NewLogger function in internal/logging/logger.go that accepts LoggingConfig, sets up appropriate zap.Config based on environment (development vs production), configures JSON or console encoding, adds caller information, stack traces for errors, and sampling to prevent log flooding. Include helper function getZapLevel to convert string levels to zap.AtomicLevel.
+
+## 3. Build Sensitive Data Filter [pending]
+### Dependencies: 10.2
+### Description: Implement SafeLog wrapper and field sanitization to prevent logging of sensitive information like passwords, tokens, and personal data
+### Details:
+Create isSensitiveField function that checks field keys against a list of sensitive patterns (password, token, secret, key, authorization, etc.). Implement SafeLog wrapper that filters out sensitive fields before logging. Add field redaction logic that replaces sensitive values with '[REDACTED]' instead of completely removing fields for better debugging.
+
+## 4. Add Correlation ID Support [pending]
+### Dependencies: 10.2
+### Description: Implement correlation ID generation and propagation for tracking requests and operations across the system
+### Details:
+Create middleware package with correlation ID generator using UUID v4. Implement WithCorrelationID function that adds correlation ID to logger context. Create HTTP middleware that extracts or generates correlation IDs from X-Correlation-ID header and adds to request context. Add helper functions to retrieve logger with correlation ID from context.
+
+## 5. Create Contextual Logger Helpers [pending]
+### Dependencies: 10.2, 10.4
+### Description: Build helper functions for adding common contextual information to logs such as user ID, request ID, operation name, and duration
+### Details:
+Implement WithContext function that extracts common fields from context (user ID, tenant ID, request ID). Create WithFields helper for adding multiple fields at once. Add WithError helper for consistent error logging with stack traces. Implement operation timing helpers (StartOperation/EndOperation) that log duration automatically. Include request/response logging helpers with size and status information.
+
+## 6. Implement Log Rotation and Management [pending]
+### Dependencies: 10.2
+### Description: Add log rotation capabilities and implement cleanup policies to manage disk space and log retention
+### Details:
+Integrate lumberjack for file rotation with configurable MaxSize, MaxBackups, MaxAge, and Compress options. Create log sink that writes to both file and stdout based on configuration. Implement graceful shutdown that flushes buffered logs. Add performance metrics collection for logging operations (logs per second, dropped logs). Create cleanup goroutine for old compressed logs based on retention policy.
+

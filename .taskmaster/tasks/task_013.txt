@@ -1,0 +1,47 @@
+# Task ID: 13
+# Title: Create Kubernetes Manifests
+# Status: pending
+# Dependencies: 12
+# Priority: medium
+# Description: Develop complete Kubernetes deployment manifests including Deployment, Service, ConfigMap, Secret, and PVC resources
+# Details:
+Create Kubernetes manifests as specified in PRD:
+- Deployment with proper resource limits and health checks
+- Service for metrics and health endpoints
+- ConfigMap for application configuration
+- Secret for Harbor credentials
+- PersistentVolumeClaim for state storage
+
+Add additional resources:
+```yaml
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: harbor-replicator
+  namespace: harbor
+spec:
+  selector:
+    matchLabels:
+      app: harbor-replicator
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+```
+
+Implement Helm chart structure for easier deployment:
+```
+harbor-replicator/
+├── Chart.yaml
+├── values.yaml
+└── templates/
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── configmap.yaml
+    ├── secret.yaml
+    └── pvc.yaml
+```
+
+# Test Strategy:
+Deploy to test Kubernetes cluster, verify all resources are created correctly, test pod restarts maintain state, verify metrics are scraped by Prometheus

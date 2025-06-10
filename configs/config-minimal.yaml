@@ -1,0 +1,23 @@
+# Harbor Replicator - Minimal Configuration
+# This is the minimum configuration needed to run Harbor Replicator
+
+harbor:
+  source:
+    name: "source-harbor"
+    url: "http://harbor-source.example.com"
+    username: "admin"
+    password: "Harbor12345"
+  
+  targets:
+    - name: "target-harbor"
+      url: "http://harbor-target.example.com"
+      username: "admin"
+      password: "Harbor12345"
+
+sync:
+  interval: 10m
+  resources:
+    robot_accounts:
+      enabled: true
+    oidc_groups:
+      enabled: true

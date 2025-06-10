@@ -1,0 +1,109 @@
+# Task ID: 3
+# Title: Create Harbor Client Wrapper
+# Status: pending
+# Dependencies: 1, 2
+# Priority: high
+# Description: Implement a wrapper around the Harbor go-client v0.210.0 with authentication, connection pooling, and error handling
+# Details:
+```go
+// internal/harbor/client.go
+type HarborClient struct {
+    client *client.Harbor
+    config HarborConfig
+    logger *zap.Logger
+}
+
+func NewHarborClient(config HarborConfig, logger *zap.Logger) (*HarborClient, error) {
+    cfg := &client.Config{
+        URL:      config.URL,
+        Username: config.Username,
+        Password: config.Password,
+        Insecure: config.InsecureSkipVerify,
+    }
+    
+    harborClient := client.NewWithConfig(cfg)
+    
+    // Test connection
+    ctx := context.Background()
+    _, err := harborClient.System.GetSystemInfo(ctx, &system.GetSystemInfoParams{})
+    if err != nil {
+        return nil, fmt.Errorf("failed to connect to Harbor: %w", err)
+    }
+    
+    return &HarborClient{
+        client: harborClient,
+        config: config,
+        logger: logger,
+    }, nil
+}
+
+// Implement methods for robot accounts and OIDC groups
+func (h *HarborClient) ListSystemRobotAccounts(ctx context.Context) ([]*model.Robot, error) {}
+func (h *HarborClient) ListProjectRobotAccounts(ctx context.Context, projectName string) ([]*model.Robot, error) {}
+func (h *HarborClient) ListOIDCGroups(ctx context.Context) ([]*model.UserGroup, error) {}
+```
+
+# Test Strategy:
+Mock Harbor API responses using httptest, test authentication failures, connection timeouts, and API error handling. Integration tests against a test Harbor instance
+
+# Subtasks:
+## 1. Define Harbor Client Configuration Structure [done]
+### Dependencies: None
+### Description: Create a comprehensive configuration structure for the Harbor client that includes connection settings, authentication details, retry policies, rate limiting, and circuit breaker configurations
+### Details:
+Define HarborConfig struct with fields for URL, username, password, TLS settings, timeout values, retry attempts, rate limit settings (requests per second), circuit breaker thresholds, and connection pool size. Include validation methods to ensure configuration values are within acceptable ranges
+
+## 2. Implement HTTP Transport with Connection Pooling [done]
+### Dependencies: 3.1
+### Description: Create a custom HTTP transport layer that implements connection pooling, timeout handling, and TLS configuration for the Harbor client
+### Details:
+Configure http.Transport with MaxIdleConns, MaxIdleConnsPerHost, IdleConnTimeout, and TLS settings based on the configuration. Implement a transport wrapper that can be injected into the Harbor go-client for better control over HTTP connections
+
+## 3. Implement Rate Limiter Middleware [done]
+### Dependencies: 3.1, 3.2
+### Description: Create a rate limiting middleware that controls the number of requests per second to the Harbor API to prevent overwhelming the server
+### Details:
+Use golang.org/x/time/rate package to implement a token bucket rate limiter. Create a middleware that wraps HTTP requests and blocks when rate limit is exceeded. Make the rate configurable through HarborConfig
+
+## 4. Implement Circuit Breaker Pattern [done]
+### Dependencies: 3.1, 3.2
+### Description: Add circuit breaker functionality to prevent cascading failures when Harbor API is experiencing issues
+### Details:
+Use github.com/sony/gobreaker or implement a custom circuit breaker that tracks failure rates and opens the circuit when threshold is exceeded. Configure thresholds for failure rate, consecutive failures, and timeout duration. Integrate with the HTTP transport layer
+
+## 5. Create Error Handling and Retry Logic [done]
+### Dependencies: 3.3, 3.4
+### Description: Implement comprehensive error handling with categorization of errors (transient vs permanent) and exponential backoff retry logic for transient failures
+### Details:
+Create error wrapper types that categorize Harbor API errors. Implement retry logic with exponential backoff for transient errors (network issues, 5xx errors). Skip retries for permanent errors (4xx errors). Include jitter in backoff calculation to prevent thundering herd
+
+## 6. Implement Core Harbor Client Wrapper [done]
+### Dependencies: 3.1, 3.2, 3.3, 3.4, 3.5
+### Description: Create the main HarborClient struct that wraps the Harbor go-client and integrates all middleware components
+### Details:
+Implement NewHarborClient constructor that initializes the go-client with custom transport, applies rate limiting and circuit breaker middleware. Add connection validation logic that tests Harbor connectivity during initialization. Include structured logging with zap for all operations
+
+## 7. Implement Robot Account Operations [done]
+### Dependencies: 3.6
+### Description: Add methods for listing and managing system-level and project-level robot accounts with proper error handling and logging
+### Details:
+Implement ListSystemRobotAccounts and ListProjectRobotAccounts methods with pagination support. Handle API responses, transform to internal models, and apply retry logic. Include detailed logging of operations and errors. Support filtering and sorting options
+
+## 8. Implement OIDC Group Operations [done]
+### Dependencies: 3.6
+### Description: Add methods for listing and managing OIDC groups with proper error handling and pagination support
+### Details:
+Implement ListOIDCGroups method with support for filtering by group type. Handle pagination for large result sets. Transform API responses to internal UserGroup models. Include proper error handling for OIDC-specific errors
+
+## 9. Add Metrics and Observability [pending]
+### Dependencies: 3.6, 3.7, 3.8
+### Description: Implement metrics collection for monitoring client performance, API call rates, error rates, and circuit breaker states
+### Details:
+Use Prometheus client library to expose metrics for request count, request duration, error rates by type, circuit breaker state changes, and connection pool statistics. Create middleware to automatically collect metrics for all API calls
+
+## 10. Create Client Health Check and Diagnostics [pending]
+### Dependencies: 3.6, 3.7, 3.8, 3.9
+### Description: Implement health check endpoints and diagnostic methods to monitor Harbor client status and connectivity
+### Details:
+Add HealthCheck method that verifies Harbor connectivity and returns detailed status including circuit breaker state, rate limiter status, and recent error statistics. Implement GetDiagnostics method that returns comprehensive client state information for debugging
+

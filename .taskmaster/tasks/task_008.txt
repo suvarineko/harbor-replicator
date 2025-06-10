@@ -1,0 +1,99 @@
+# Task ID: 8
+# Title: Implement Monitoring and Metrics
+# Status: pending
+# Dependencies: 1, 7
+# Priority: medium
+# Description: Set up Prometheus metrics collection and expose metrics endpoint for monitoring synchronization operations
+# Details:
+```go
+// internal/monitoring/metrics.go
+var (
+    syncTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "harbor_replicator_sync_total",
+            Help: "Total number of synchronization cycles",
+        },
+        []string{"status"},
+    )
+    
+    resourcesSynced = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "harbor_replicator_resources_synced",
+            Help: "Total resources synchronized",
+        },
+        []string{"type", "source", "operation"},
+    )
+    
+    syncDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "harbor_replicator_sync_duration_seconds",
+            Help: "Duration of sync operations",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"source", "resource_type"},
+    )
+)
+
+func init() {
+    prometheus.MustRegister(syncTotal, resourcesSynced, syncDuration)
+}
+
+func SetupMetricsServer(port int) *http.Server {
+    mux := http.NewServeMux()
+    mux.Handle("/metrics", promhttp.Handler())
+    
+    server := &http.Server{
+        Addr: fmt.Sprintf(":%d", port),
+        Handler: mux,
+    }
+    
+    go func() {
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("metrics server failed: %v", err)
+        }
+    }()
+    
+    return server
+}
+```
+
+# Test Strategy:
+Verify all metrics are properly registered and incremented, test metric labels are correct, ensure metrics endpoint returns valid Prometheus format
+
+# Subtasks:
+## 1. Define Core Metrics Structure [pending]
+### Dependencies: None
+### Description: Create comprehensive metrics definitions for all synchronization operations including counters, gauges, and histograms
+### Details:
+Extend the existing metrics.go to include additional metrics: sync errors counter with error type labels, active sync operations gauge, resource queue size gauge, API call latency histogram, and last successful sync timestamp gauge. Define proper metric naming conventions following Prometheus best practices with harbor_replicator_ prefix.
+
+## 2. Implement Metrics Collection Interface [pending]
+### Dependencies: 8.1
+### Description: Create a metrics collector interface that can be injected into sync operations to track metrics
+### Details:
+Design MetricsCollector interface with methods like RecordSyncStart(), RecordSyncComplete(), RecordResourceSynced(), RecordError(). Implement PrometheusCollector that updates the defined Prometheus metrics. Include context propagation for tracking operation metadata.
+
+## 3. Integrate Metrics into Sync Operations [pending]
+### Dependencies: 8.2
+### Description: Instrument all synchronization operations with metrics collection calls
+### Details:
+Modify sync package to accept MetricsCollector, add timing measurements around sync operations, track resource counts by type and operation (create/update/delete), record errors with proper labels, and update queue size metrics. Ensure metrics are collected at appropriate granularity without impacting performance.
+
+## 4. Create Custom Metrics Registry [pending]
+### Dependencies: 8.1
+### Description: Implement a custom registry for application-specific metrics and health indicators
+### Details:
+Build a registry that tracks Harbor instance health, replication lag metrics, configuration drift detection, and resource quota usage. Include methods to expose these as Prometheus metrics and provide a summary endpoint for quick health checks.
+
+## 5. Setup HTTP Metrics Server [pending]
+### Dependencies: 8.3, 8.4
+### Description: Implement the HTTP server to expose Prometheus metrics endpoint with proper security and configuration
+### Details:
+Enhance SetupMetricsServer to include graceful shutdown, configurable bind address, optional TLS support, basic authentication if needed, and health/readiness endpoints. Add middleware for request logging and panic recovery. Ensure server lifecycle is properly managed.
+
+## 6. Add Metrics Dashboard Configuration [pending]
+### Dependencies: 8.5
+### Description: Create Grafana dashboard configuration and alerting rules for the exposed metrics
+### Details:
+Generate Grafana dashboard JSON with panels for sync success rate, resource synchronization trends, error rates by type, performance metrics, and queue depths. Include Prometheus alerting rules for sync failures, high error rates, and performance degradation. Document metric meanings and thresholds.
+

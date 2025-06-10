@@ -1,0 +1,93 @@
+# Task ID: 2
+# Title: Implement Configuration Manager
+# Status: done
+# Dependencies: 1
+# Priority: high
+# Description: Create a configuration management system using Viper to load and validate YAML configurations with support for environment variable substitution
+# Details:
+```go
+// internal/config/config.go
+type Config struct {
+    Replicator ReplicatorConfig `mapstructure:"replicator"`
+    LocalHarbor HarborConfig `mapstructure:"local_harbor"`
+    RemoteHarbors []RemoteHarborConfig `mapstructure:"remote_harbors"`
+    SyncResources SyncResourcesConfig `mapstructure:"sync_resources"`
+    Logging LoggingConfig `mapstructure:"logging"`
+    Monitoring MonitoringConfig `mapstructure:"monitoring"`
+}
+
+func LoadConfig(path string) (*Config, error) {
+    viper.SetConfigFile(path)
+    viper.SetEnvPrefix("HARBOR")
+    viper.AutomaticEnv()
+    
+    if err := viper.ReadInConfig(); err != nil {
+        return nil, err
+    }
+    
+    var config Config
+    if err := viper.Unmarshal(&config); err != nil {
+        return nil, err
+    }
+    
+    return &config, config.Validate()
+}
+
+func (c *Config) Validate() error {
+    // Validate URLs, required fields, etc.
+}
+```
+Implement hot-reload capability using viper.WatchConfig() and viper.OnConfigChange()
+
+# Test Strategy:
+Unit tests for configuration loading with valid/invalid YAML files, environment variable substitution tests, validation tests for missing required fields, and integration tests for configuration hot-reload
+
+# Subtasks:
+## 1. Define Configuration Data Structures [done]
+### Dependencies: None
+### Description: Create comprehensive Go structs for all configuration sections including ReplicatorConfig, HarborConfig, RemoteHarborConfig, SyncResourcesConfig, LoggingConfig, and MonitoringConfig with proper struct tags for Viper mapping
+### Details:
+Define structs in internal/config/types.go with mapstructure tags, include fields for URLs, credentials, timeouts, retry policies, resource filters, and monitoring endpoints. Add JSON tags for serialization and validation tags for future use
+
+## 2. Implement Basic Configuration Loading [done]
+### Dependencies: 2.1
+### Description: Create the core LoadConfig function using Viper to read YAML configuration files and unmarshal into Config struct with environment variable substitution support
+### Details:
+Implement LoadConfig in internal/config/config.go, set up Viper with SetConfigFile, SetEnvPrefix('HARBOR'), AutomaticEnv(), and SetEnvKeyReplacer for nested env vars. Handle file reading errors and unmarshaling errors with descriptive messages
+
+## 3. Implement Configuration Validation [done]
+### Dependencies: 2.1, 2.2
+### Description: Create comprehensive validation logic for all configuration fields including URL validation, required field checks, credential validation, and logical consistency checks
+### Details:
+Implement Validate() method on Config struct and nested validation methods for each sub-configuration. Validate URLs using net/url package, check for required fields, validate port ranges, timeout values, and ensure remote Harbor configurations have unique names
+
+## 4. Add Configuration Hot-Reload Support [done]
+### Dependencies: 2.2, 2.3
+### Description: Implement configuration file watching and hot-reload capability using Viper's WatchConfig and OnConfigChange functions with proper synchronization
+### Details:
+Create WatchConfig method that uses viper.WatchConfig() and registers OnConfigChange callback. Implement thread-safe configuration updates using sync.RWMutex, validate new configuration before applying, and provide hooks for components to react to config changes
+
+## 5. Create Configuration Manager Service [done]
+### Dependencies: 2.2, 2.3, 2.4
+### Description: Build a ConfigManager service that encapsulates configuration loading, watching, and provides thread-safe access to current configuration with change notifications
+### Details:
+Create internal/config/manager.go with ConfigManager struct containing current config, mutex, and change listeners. Implement methods: NewConfigManager, GetConfig, RegisterChangeListener, and internal reload logic. Use channels for change notifications
+
+## 6. Implement Environment Variable Substitution [done]
+### Dependencies: 2.2
+### Description: Enhance configuration loading to support complex environment variable substitution patterns including nested variables and default values
+### Details:
+Extend Viper configuration to handle patterns like ${VAR_NAME}, ${VAR_NAME:-default}, and nested substitutions. Use viper.SetEnvKeyReplacer to map nested config keys to environment variables with proper delimiters (e.g., HARBOR_LOCAL_HARBOR_URL)
+
+## 7. Add Configuration Export and Import Utilities [done]
+### Dependencies: 2.1, 2.3, 2.5
+### Description: Create utilities to export current configuration (with secrets masked) and import configuration with validation for debugging and migration purposes
+### Details:
+Implement ExportConfig method that serializes current config to YAML with sensitive fields masked, and ImportConfig that loads and validates external configuration. Add command-line flags for config operations in cmd package
+
+## 8. Create Configuration Documentation and Examples [done]
+### Dependencies: 2.1, 2.3, 2.6
+### Description: Generate comprehensive configuration documentation including all available options, environment variable mappings, and example configurations for common scenarios
+### Details:
+Create configs/example.yaml with fully documented configuration, generate markdown documentation from struct tags, include examples for single/multi-harbor setups, and document environment variable naming conventions. Add configuration validation CLI command
+

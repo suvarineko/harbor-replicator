@@ -1,0 +1,101 @@
+# Task ID: 6
+# Title: Build OIDC Group Synchronization
+# Status: pending
+# Dependencies: 3, 4
+# Priority: high
+# Description: Implement synchronization for OIDC member groups including their roles, permissions, and project associations
+# Details:
+```go
+// internal/sync/oidc_groups.go
+type OIDCGroupSynchronizer struct {
+    localClient *harbor.HarborClient
+    remoteClients map[string]*harbor.HarborClient
+    stateManager *state.StateManager
+    logger *zap.Logger
+}
+
+func (s *OIDCGroupSynchronizer) SyncGroups(ctx context.Context, source string) error {
+    remoteGroups, err := s.remoteClients[source].ListOIDCGroups(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list remote groups: %w", err)
+    }
+    
+    for _, group := range remoteGroups {
+        // Get group's project associations
+        projects, err := s.remoteClients[source].GetGroupProjects(ctx, group.ID)
+        if err != nil {
+            s.logger.Error("failed to get group projects", zap.Error(err))
+            continue
+        }
+        
+        // Find or create local group
+        localGroup, err := s.findOrCreateGroup(ctx, group)
+        if err != nil {
+            s.logger.Error("failed to sync group", zap.Error(err))
+            continue
+        }
+        
+        // Sync project associations
+        for _, project := range projects {
+            if err := s.syncGroupProjectAssociation(ctx, localGroup, project); err != nil {
+                s.logger.Error("failed to sync project association", zap.Error(err))
+            }
+        }
+    }
+    
+    return nil
+}
+```
+
+# Test Strategy:
+Test group creation with project associations, permission preservation, and name-based matching. Verify group-to-project mappings are maintained correctly
+
+# Subtasks:
+## 1. Define OIDC Group Data Models and Interfaces [pending]
+### Dependencies: None
+### Description: Create comprehensive data structures for OIDC groups including group metadata, role definitions, permission sets, and project associations
+### Details:
+Define structs for OIDCGroup, GroupRole, GroupPermission, GroupProjectAssociation in internal/models/. Include fields for group_name, group_type, ldap_group_dn, id_token_claim, and permission hierarchy levels. Create interfaces for group operations in internal/harbor/client.go
+
+## 2. Implement Harbor API Client Methods for OIDC Groups [pending]
+### Dependencies: 6.1
+### Description: Add methods to HarborClient for listing, creating, updating, and deleting OIDC groups, including methods for managing group-project associations
+### Details:
+Implement ListOIDCGroups, GetOIDCGroup, CreateOIDCGroup, UpdateOIDCGroup, DeleteOIDCGroup, GetGroupProjects, AddGroupToProject, RemoveGroupFromProject methods. Use Harbor's /usergroups and /projects/{project_id}/members APIs
+
+## 3. Create Group State Management Layer [pending]
+### Dependencies: 6.1
+### Description: Implement state tracking for OIDC groups to maintain synchronization status, track changes, and handle group lifecycle
+### Details:
+Extend StateManager to track group states including last_sync_time, sync_status, and group_checksum. Implement methods for SaveGroupState, GetGroupState, and CompareGroupStates. Store group-project mappings and permission hierarchies
+
+## 4. Build Group Matching and Resolution Logic [pending]
+### Dependencies: 6.2, 6.3
+### Description: Implement logic to match groups across Harbor instances using name-based references and handle group identity resolution
+### Details:
+Create findOrCreateGroup method that matches groups by group_name and group_type. Implement logic to handle LDAP DN normalization and OIDC claim matching. Build group comparison logic that considers permission hierarchies
+
+## 5. Implement Permission Hierarchy Synchronization [pending]
+### Dependencies: 6.4
+### Description: Build logic to synchronize group permissions while maintaining role hierarchies and inheritance rules
+### Details:
+Create methods to analyze and replicate permission hierarchies. Implement role mapping between source and target (Admin, Developer, Guest, etc.). Handle permission inheritance and override scenarios. Ensure atomic permission updates
+
+## 6. Create Project Association Synchronization [pending]
+### Dependencies: 6.4, 6.5
+### Description: Implement synchronization of group-project associations including role assignments within each project
+### Details:
+Build syncGroupProjectAssociation method that maps project names between instances, creates missing project associations, updates roles within projects, and removes obsolete associations. Handle project name resolution and validation
+
+## 7. Add Conflict Resolution and Error Handling [pending]
+### Dependencies: 6.4, 6.5, 6.6
+### Description: Implement comprehensive error handling and conflict resolution strategies for group synchronization scenarios
+### Details:
+Handle scenarios like duplicate group names, conflicting permissions, missing projects, and API failures. Implement retry logic with exponential backoff. Add detailed logging for troubleshooting. Create rollback mechanisms for failed syncs
+
+## 8. Implement Batch Processing and Performance Optimization [pending]
+### Dependencies: 6.6, 6.7
+### Description: Optimize group synchronization for large-scale deployments with hundreds of groups and complex permission structures
+### Details:
+Implement batch API calls for group operations, add concurrent processing with proper synchronization, implement caching for frequently accessed group data, and add progress tracking. Include rate limiting to avoid overwhelming Harbor API
+
