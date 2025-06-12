@@ -1,0 +1,184 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-replicator
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    version: v1.0.0
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: harbor-replicator
+  template:
+    metadata:
+      labels:
+        app: harbor-replicator
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: harbor-replicator
+        image: harbor-replicator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: CONFIG_FILE
+          value: "/etc/harbor-replicator/config.yaml"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: HARBOR_SOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-replicator-secrets
+              key: source-password
+        - name: HARBOR_TARGET_1_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-replicator-secrets
+              key: target-1-password
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /ready
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        volumeMounts:
+        - name: config
+          mountPath: /etc/harbor-replicator
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: harbor-replicator-config
+          defaultMode: 0644
+      - name: data
+        persistentVolumeClaim:
+          claimName: harbor-replicator-data
+      - name: tmp
+        emptyDir: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 45
+      serviceAccountName: harbor-replicator
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-replicator-data
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd  # Adjust based on your cluster's storage classes
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor-replicator
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: rbac
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: harbor-replicator
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harbor-replicator
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: harbor-replicator
+subjects:
+- kind: ServiceAccount
+  name: harbor-replicator
+  namespace: harbor-replicator

@@ -1,0 +1,312 @@
+groups:
+  - name: harbor_replicator_alerts
+    rules:
+      # Sync Operation Alerts
+      - alert: HarborReplicatorSyncFailureHigh
+        expr: |
+          (
+            sum(rate(harbor_replicator_sync_total{status="failed"}[5m])) /
+            sum(rate(harbor_replicator_sync_total[5m]))
+          ) * 100 > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High sync failure rate detected"
+          description: "Harbor Replicator sync failure rate is {{ $value }}% over the last 5 minutes, which is above the 10% threshold."
+
+      - alert: HarborReplicatorSyncFailureCritical
+        expr: |
+          (
+            sum(rate(harbor_replicator_sync_total{status="failed"}[5m])) /
+            sum(rate(harbor_replicator_sync_total[5m]))
+          ) * 100 > 25
+        for: 1m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Critical sync failure rate detected"
+          description: "Harbor Replicator sync failure rate is {{ $value }}% over the last 5 minutes, which is critically high (>25%)."
+
+      - alert: HarborReplicatorNoSyncActivity
+        expr: |
+          sum(rate(harbor_replicator_sync_total[10m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "No sync activity detected"
+          description: "Harbor Replicator has not performed any sync operations in the last 10 minutes."
+
+      # Sync Duration Alerts
+      - alert: HarborReplicatorSyncDurationHigh
+        expr: |
+          histogram_quantile(0.95, sum(rate(harbor_replicator_sync_duration_seconds_bucket[5m])) by (le)) > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High sync duration detected"
+          description: "95th percentile sync duration is {{ $value }}s, which is above the 300s threshold."
+
+      - alert: HarborReplicatorSyncDurationCritical
+        expr: |
+          histogram_quantile(0.95, sum(rate(harbor_replicator_sync_duration_seconds_bucket[5m])) by (le)) > 600
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Critical sync duration detected"
+          description: "95th percentile sync duration is {{ $value }}s, which is critically high (>600s)."
+
+      # Resource Processing Alerts
+      - alert: HarborReplicatorResourceProcessingErrors
+        expr: |
+          sum(rate(harbor_replicator_resources_errors_total[5m])) > 1
+        for: 3m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High resource processing error rate"
+          description: "Resource processing error rate is {{ $value }} errors/sec, which is above the 1/sec threshold."
+
+      # API Call Latency Alerts
+      - alert: HarborReplicatorAPILatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum(rate(harbor_replicator_api_call_latency_seconds_bucket[5m])) by (le, source)) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High API call latency to {{ $labels.source }}"
+          description: "95th percentile API call latency to {{ $labels.source }} is {{ $value }}s, which is above the 10s threshold."
+
+      # Harbor Instance Health Alerts
+      - alert: HarborInstanceDown
+        expr: |
+          harbor_replicator_harbor_instance_health == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Harbor instance {{ $labels.instance }} is down"
+          description: "Harbor instance {{ $labels.instance }} ({{ $labels.type }}) is not responding to health checks."
+
+      # Queue Size Alerts
+      - alert: HarborReplicatorQueueSizeHigh
+        expr: |
+          harbor_replicator_resource_queue_size > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High queue size for {{ $labels.resource_type }}"
+          description: "Queue size for {{ $labels.resource_type }} is {{ $value }}, which is above the 1000 threshold."
+
+      - alert: HarborReplicatorQueueSizeCritical
+        expr: |
+          harbor_replicator_resource_queue_size > 5000
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Critical queue size for {{ $labels.resource_type }}"
+          description: "Queue size for {{ $labels.resource_type }} is {{ $value }}, which is critically high (>5000)."
+
+      # Replication Lag Alerts
+      - alert: HarborReplicatorReplicationLagHigh
+        expr: |
+          harbor_replicator_replication_lag_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High replication lag detected"
+          description: "Replication lag between {{ $labels.source }} and {{ $labels.target }} for {{ $labels.resource_type }} is {{ $value }}s (>1 hour)."
+
+      - alert: HarborReplicatorReplicationLagCritical
+        expr: |
+          harbor_replicator_replication_lag_seconds > 10800
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Critical replication lag detected"
+          description: "Replication lag between {{ $labels.source }} and {{ $labels.target }} for {{ $labels.resource_type }} is {{ $value }}s (>3 hours)."
+
+      # Configuration Drift Alerts
+      - alert: HarborReplicatorConfigurationDrift
+        expr: |
+          harbor_replicator_configuration_drift > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Configuration drift detected"
+          description: "{{ $value }} configuration differences detected between {{ $labels.source }} and {{ $labels.target }} for {{ $labels.resource_type }}."
+
+      - alert: HarborReplicatorConfigurationDriftCritical
+        expr: |
+          harbor_replicator_configuration_drift > 50
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "High configuration drift detected"
+          description: "{{ $value }} configuration differences detected between {{ $labels.source }} and {{ $labels.target }} for {{ $labels.resource_type }}, which is critically high."
+
+      # Quota Usage Alerts
+      - alert: HarborReplicatorQuotaUsageHigh
+        expr: |
+          harbor_replicator_resource_quota_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High quota usage on {{ $labels.instance }}"
+          description: "{{ $labels.resource_type }} quota usage on {{ $labels.instance }} is {{ $value }}%, which is above the 80% threshold."
+
+      - alert: HarborReplicatorQuotaUsageCritical
+        expr: |
+          harbor_replicator_resource_quota_usage_percent > 95
+        for: 1m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Critical quota usage on {{ $labels.instance }}"
+          description: "{{ $labels.resource_type }} quota usage on {{ $labels.instance }} is {{ $value }}%, which is critically high (>95%)."
+
+      # Stale Sync Alerts
+      - alert: HarborReplicatorStaleSyncData
+        expr: |
+          time() - harbor_replicator_last_successful_sync_timestamp > 7200
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Stale sync data detected"
+          description: "Last successful sync for {{ $labels.resource_type }} from {{ $labels.source }} was more than 2 hours ago."
+
+      - alert: HarborReplicatorStaleSyncDataCritical
+        expr: |
+          time() - harbor_replicator_last_successful_sync_timestamp > 21600
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Very stale sync data detected"
+          description: "Last successful sync for {{ $labels.resource_type }} from {{ $labels.source }} was more than 6 hours ago."
+
+      # Active Operations Alerts
+      - alert: HarborReplicatorTooManyActiveSyncs
+        expr: |
+          harbor_replicator_active_sync_operations > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Too many active sync operations"
+          description: "There are {{ $value }} active sync operations, which may indicate a backlog or performance issue."
+
+      # Error Pattern Alerts
+      - alert: HarborReplicatorAuthenticationErrors
+        expr: |
+          sum(rate(harbor_replicator_sync_errors_total{error_type="auth"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Authentication errors detected"
+          description: "Authentication error rate is {{ $value }} errors/sec. Check Harbor credentials and permissions."
+
+      - alert: HarborReplicatorConnectionErrors
+        expr: |
+          sum(rate(harbor_replicator_sync_errors_total{error_type="connection"}[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Connection errors detected"
+          description: "Connection error rate is {{ $value }} errors/sec. Check network connectivity to Harbor instances."
+
+      - alert: HarborReplicatorTimeoutErrors
+        expr: |
+          sum(rate(harbor_replicator_sync_errors_total{error_type="timeout"}[5m])) > 0.2
+        for: 3m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Timeout errors detected"
+          description: "Timeout error rate is {{ $value }} errors/sec. Harbor instances may be under heavy load."
+
+  - name: harbor_replicator_engine_alerts
+    rules:
+      # Engine Health Alerts
+      - alert: HarborReplicatorEngineDown
+        expr: |
+          up{job="harbor-replicator"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: harbor-replicator
+        annotations:
+          summary: "Harbor Replicator engine is down"
+          description: "Harbor Replicator engine is not responding to scrape requests."
+
+      # Worker Pool Alerts
+      - alert: HarborReplicatorWorkerPoolExhausted
+        expr: |
+          harbor_replicator_engine_worker_pool_active >= harbor_replicator_engine_worker_pool_size
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "Worker pool exhausted"
+          description: "All {{ $value }} workers in the pool are active, which may cause job queuing."
+
+      # Memory Usage Alerts
+      - alert: HarborReplicatorHighMemoryUsage
+        expr: |
+          harbor_replicator_performance_memory_usage_bytes > 1073741824
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizeBytes }}, which is above 1GB."
+
+      # Goroutine Count Alerts
+      - alert: HarborReplicatorHighGoroutineCount
+        expr: |
+          harbor_replicator_performance_goroutines > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: harbor-replicator
+        annotations:
+          summary: "High goroutine count"
+          description: "Goroutine count is {{ $value }}, which may indicate a goroutine leak."

@@ -427,9 +427,12 @@ func (h *HarborClientWrapper) HealthCheck(ctx context.Context) (*HealthCheckResu
 	start := time.Now()
 
 	result := &HealthCheckResult{
-		Healthy:     false,
-		LastChecked: start,
-		Details:     make(map[string]interface{}),
+		Healthy:        false,
+		Timestamp:      start,
+		Details:        make(map[string]interface{}),
+		ComponentChecks: make(map[string]ComponentHealth),
+		Errors:         make([]string, 0),
+		Warnings:       make([]string, 0),
 	}
 
 	// Test basic connectivity

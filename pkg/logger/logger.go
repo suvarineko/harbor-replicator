@@ -1,11 +1,16 @@
 package logger
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -235,4 +240,190 @@ func (l *NoOpLogger) Error(msg string, fields ...interface{}) {}
 
 func NewNoOpLogger() *NoOpLogger {
 	return &NoOpLogger{}
+}
+
+// Context keys for logger correlation
+type contextKey string
+
+const (
+	correlationIDKey contextKey = "correlation_id"
+	loggerKey        contextKey = "logger"
+)
+
+// GenerateCorrelationID generates a new correlation ID based on the configured generator
+func GenerateCorrelationID(cfg *config.CorrelationIDConfig) string {
+	if cfg == nil || !cfg.Enabled {
+		return ""
+	}
+
+	switch strings.ToLower(cfg.Generator) {
+	case "uuid":
+		return uuid.New().String()
+	case "random":
+		// Generate a random 8-character string
+		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		result := make([]byte, 8)
+		for i := range result {
+			num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+			result[i] = charset[num.Int64()]
+		}
+		return string(result)
+	case "sequential":
+		// Use timestamp-based sequential ID
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	default:
+		return uuid.New().String()
+	}
+}
+
+// WithCorrelationIDFromContext creates a logger with correlation ID from context
+func (l *Logger) WithCorrelationIDFromContext(ctx context.Context) *Logger {
+	if correlationID, ok := ctx.Value(correlationIDKey).(string); ok && correlationID != "" {
+		return l.WithCorrelationID(correlationID)
+	}
+	return l
+}
+
+// WithContext extracts common contextual information and creates a logger with those fields
+func (l *Logger) WithContext(ctx context.Context) *Logger {
+	fields := make([]zap.Field, 0, 4)
+	
+	// Add correlation ID if present
+	if correlationID, ok := ctx.Value(correlationIDKey).(string); ok && correlationID != "" {
+		fields = append(fields, zap.String(l.config.CorrelationID.FieldName, correlationID))
+	}
+	
+	// Add user ID if present (common pattern)
+	if userID, ok := ctx.Value("user_id").(string); ok && userID != "" {
+		fields = append(fields, zap.String("user_id", userID))
+	}
+	
+	// Add tenant ID if present
+	if tenantID, ok := ctx.Value("tenant_id").(string); ok && tenantID != "" {
+		fields = append(fields, zap.String("tenant_id", tenantID))
+	}
+	
+	// Add operation name if present
+	if operation, ok := ctx.Value("operation").(string); ok && operation != "" {
+		fields = append(fields, zap.String("operation", operation))
+	}
+
+	if len(fields) > 0 {
+		return l.WithFields(fields...)
+	}
+	return l
+}
+
+// WithError adds error information with optional stack trace
+func (l *Logger) WithError(err error) *Logger {
+	if err == nil {
+		return l
+	}
+	return l.WithFields(zap.Error(err))
+}
+
+// WithOperation adds operation tracking fields
+func (l *Logger) WithOperation(operationName string) *Logger {
+	return l.WithFields(
+		zap.String("operation", operationName),
+		zap.Time("operation_start", time.Now()),
+	)
+}
+
+// LogOperationComplete logs operation completion with duration
+func (l *Logger) LogOperationComplete(operationName string, startTime time.Time, err error) {
+	duration := time.Since(startTime)
+	fields := []zap.Field{
+		zap.String("operation", operationName),
+		zap.Duration("duration", duration),
+		zap.Time("completed_at", time.Now()),
+	}
+	
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+		l.SafeLog(zapcore.ErrorLevel, "Operation failed", fields...)
+	} else {
+		l.SafeLog(zapcore.InfoLevel, "Operation completed", fields...)
+	}
+}
+
+// Context helpers for setting and getting correlation ID and logger
+
+// WithCorrelationID adds correlation ID to context
+func WithCorrelationID(ctx context.Context, correlationID string) context.Context {
+	return context.WithValue(ctx, correlationIDKey, correlationID)
+}
+
+// GetCorrelationID retrieves correlation ID from context
+func GetCorrelationID(ctx context.Context) string {
+	if correlationID, ok := ctx.Value(correlationIDKey).(string); ok {
+		return correlationID
+	}
+	return ""
+}
+
+// WithLogger adds logger to context
+func WithLogger(ctx context.Context, logger *Logger) context.Context {
+	return context.WithValue(ctx, loggerKey, logger)
+}
+
+// FromContext retrieves logger from context, returns a no-op logger if not found
+func FromContext(ctx context.Context) *Logger {
+	if logger, ok := ctx.Value(loggerKey).(*Logger); ok {
+		return logger
+	}
+	// Return a basic logger if none found in context
+	cfg := &config.LoggingConfig{
+		Level:  "info",
+		Format: "console",
+		Output: []string{"stdout"},
+	}
+	logger, _ := NewLogger(cfg)
+	return logger
+}
+
+// Operation tracking helpers
+
+// StartOperation begins an operation and returns a context with logger and start time
+func StartOperation(ctx context.Context, logger *Logger, operationName string) (context.Context, func(error)) {
+	startTime := time.Now()
+	correlationID := GetCorrelationID(ctx)
+	if correlationID == "" {
+		correlationID = GenerateCorrelationID(&logger.config.CorrelationID)
+		ctx = WithCorrelationID(ctx, correlationID)
+	}
+	
+	opLogger := logger.WithCorrelationID(correlationID).WithOperation(operationName)
+	ctx = WithLogger(ctx, opLogger)
+	
+	opLogger.Info("Operation started", zap.String("operation", operationName))
+	
+	return ctx, func(err error) {
+		opLogger.LogOperationComplete(operationName, startTime, err)
+	}
+}
+
+// RequestLogging helpers for HTTP request/response logging
+func (l *Logger) LogRequest(method, path string, size int64) {
+	l.Info("HTTP request",
+		zap.String("method", method),
+		zap.String("path", path),
+		zap.Int64("request_size", size),
+	)
+}
+
+func (l *Logger) LogResponse(statusCode int, size int64, duration time.Duration) {
+	level := zapcore.InfoLevel
+	if statusCode >= 400 {
+		level = zapcore.WarnLevel
+	}
+	if statusCode >= 500 {
+		level = zapcore.ErrorLevel
+	}
+	
+	l.SafeLog(level, "HTTP response",
+		zap.Int("status_code", statusCode),
+		zap.Int64("response_size", size),
+		zap.Duration("duration", duration),
+	)
 }

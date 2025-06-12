@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harbor-replicator
+  labels:
+    name: harbor-replicator
+    app: harbor-replicator
+    purpose: harbor-synchronization
+  annotations:
+    description: "Harbor Registry Replicator - Synchronizes robot accounts and OIDC groups between Harbor instances"

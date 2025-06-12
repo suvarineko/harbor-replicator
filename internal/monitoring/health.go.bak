@@ -1,0 +1,1221 @@
+package monitoring
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"harbor-replicator/internal/engine"
+	"harbor-replicator/pkg/config"
+	"harbor-replicator/pkg/state"
+)
+
+// ComponentStatus represents the health status of a component
+type ComponentStatus string
+
+const (
+	StatusHealthy  ComponentStatus = "healthy"
+	StatusDegraded ComponentStatus = "degraded"
+	StatusUnhealthy ComponentStatus = "unhealthy"
+)
+
+// ComponentHealth represents the health state of a single component
+type ComponentHealth struct {
+	Name        string            `json:"name"`
+	Status      ComponentStatus   `json:"status"`
+	LastCheck   time.Time         `json:"last_check"`
+	Error       string            `json:"error,omitempty"`
+	Metrics     map[string]interface{} `json:"metrics,omitempty"`
+	Duration    time.Duration     `json:"duration_ms"`
+}
+
+// OverallHealth represents the aggregated health status
+type OverallHealth struct {
+	Status     ComponentStatus            `json:"status"`
+	Version    string                     `json:"version"`
+	Uptime     float64                    `json:"uptime_seconds"`
+	Timestamp  time.Time                  `json:"timestamp"`
+	Components map[string]ComponentHealth `json:"components"`
+}
+
+// ReadinessStatus represents the readiness state of the application
+type ReadinessStatus struct {
+	Ready             bool                       `json:"ready"`
+	Reason            string                     `json:"reason,omitempty"`
+	LastSync          *time.Time                 `json:"last_sync,omitempty"`
+	SourcesConnected  int                        `json:"sources_connected"`
+	WorkersActive     int                        `json:"workers_active"`
+	QueueSize         int                        `json:"queue_size"`
+	Components        map[string]ComponentHealth `json:"components"`
+	InitializationAge time.Duration              `json:"initialization_age_seconds"`
+}
+
+// HealthConfig contains configuration for health checks
+type HealthConfig struct {
+	CheckInterval     time.Duration `yaml:"check_interval" mapstructure:"check_interval"`
+	CheckTimeout      time.Duration `yaml:"check_timeout" mapstructure:"check_timeout"`
+	GracePeriod       time.Duration `yaml:"grace_period" mapstructure:"grace_period"`
+	CacheExpiry       time.Duration `yaml:"cache_expiry" mapstructure:"cache_expiry"`
+	EnableProfiling   bool          `yaml:"enable_profiling" mapstructure:"enable_profiling"`
+	EnableDetailedMetrics bool      `yaml:"enable_detailed_metrics" mapstructure:"enable_detailed_metrics"`
+}
+
+// DefaultHealthConfig returns default health check configuration
+func DefaultHealthConfig() *HealthConfig {
+	return &HealthConfig{
+		CheckInterval:     30 * time.Second,
+		CheckTimeout:      5 * time.Second,
+		GracePeriod:       30 * time.Second,
+		CacheExpiry:       10 * time.Second,
+		EnableProfiling:   false,
+		EnableDetailedMetrics: true,
+	}
+}
+
+// HealthServer provides health and readiness endpoints
+type HealthServer struct {
+	engine       engine.SyncEngine
+	stateManager *state.StateManager
+	config       *HealthConfig
+	logger       *zap.Logger
+	startTime    time.Time
+	version      string
+
+	// Component health tracking
+	healthMutex     sync.RWMutex
+	lastHealthCheck time.Time
+	cachedHealth    *OverallHealth
+	componentChecks map[string]func() ComponentHealth
+
+	// Readiness tracking
+	readinessMutex     sync.RWMutex
+	lastReadinessCheck time.Time
+	cachedReadiness    *ReadinessStatus
+
+	// Shutdown state
+	shutdownMutex sync.RWMutex
+	isShuttingDown bool
+}
+
+// NewHealthServer creates a new health server instance
+func NewHealthServer(engine engine.SyncEngine, stateManager *state.StateManager, cfg *config.ReplicatorConfig, logger *zap.Logger) *HealthServer {
+	healthConfig := DefaultHealthConfig()
+	
+	// Override with config values if available
+	if cfg.Monitoring != nil && cfg.Monitoring.Health != nil {
+		if cfg.Monitoring.Health.CheckInterval > 0 {
+			healthConfig.CheckInterval = cfg.Monitoring.Health.CheckInterval
+		}
+		if cfg.Monitoring.Health.CheckTimeout > 0 {
+			healthConfig.CheckTimeout = cfg.Monitoring.Health.CheckTimeout
+		}
+		if cfg.Monitoring.Health.GracePeriod > 0 {
+			healthConfig.GracePeriod = cfg.Monitoring.Health.GracePeriod
+		}
+	}
+
+	hs := &HealthServer{
+		engine:       engine,
+		stateManager: stateManager,
+		config:       healthConfig,
+		logger:       logger.Named("health-server"),
+		startTime:    time.Now(),
+		version:      "1.0.0", // TODO: Get from build info
+		componentChecks: make(map[string]func() ComponentHealth),
+	}
+
+	// Register default component checkers
+	hs.registerComponentCheckers()
+
+	return hs
+}
+
+// registerComponentCheckers sets up default health checkers for system components
+func (hs *HealthServer) registerComponentCheckers() {
+	hs.componentChecks["sync_engine"] = hs.checkSyncEngineHealth
+	hs.componentChecks["state_manager"] = hs.checkStateManagerHealth
+	hs.componentChecks["database"] = hs.checkDatabaseHealth
+	hs.componentChecks["external_services"] = hs.checkExternalServicesHealth
+}
+
+// RegisterComponentChecker allows registering custom component health checkers
+func (hs *HealthServer) RegisterComponentChecker(name string, checker func() ComponentHealth) {
+	hs.healthMutex.Lock()
+	defer hs.healthMutex.Unlock()
+	hs.componentChecks[name] = checker
+}
+
+// SetVersion sets the application version for health reports
+func (hs *HealthServer) SetVersion(version string) {
+	hs.version = version
+}
+
+// MarkShuttingDown marks the server as shutting down, affecting health status
+func (hs *HealthServer) MarkShuttingDown() {
+	hs.shutdownMutex.Lock()
+	defer hs.shutdownMutex.Unlock()
+	hs.isShuttingDown = true
+	hs.logger.Info("Health server marked as shutting down")
+}
+
+// IsShuttingDown returns whether the server is in shutdown state
+func (hs *HealthServer) IsShuttingDown() bool {
+	hs.shutdownMutex.RLock()
+	defer hs.shutdownMutex.RUnlock()
+	return hs.isShuttingDown
+}
+
+// SetupRoutes configures the HTTP routes for health endpoints
+func (hs *HealthServer) SetupRoutes() *gin.Engine {
+	// Set Gin to release mode for production
+	gin.SetMode(gin.ReleaseMode)
+	
+	router := gin.New()
+	
+	// Add recovery middleware
+	router.Use(gin.Recovery())
+	
+	// Add logging middleware
+	router.Use(hs.requestLoggingMiddleware())
+	
+	// Add timeout middleware
+	router.Use(hs.timeoutMiddleware())
+	
+	// Health endpoints
+	router.GET("/health", hs.healthHandler)
+	router.GET("/ready", hs.readyHandler)
+	router.GET("/live", hs.livenessHandler)
+	
+	// Metrics endpoint (if enabled)
+	if hs.config.EnableDetailedMetrics {
+		router.GET("/metrics/health", hs.detailedMetricsHandler)
+	}
+	
+	// Profiling endpoints (if enabled)
+	if hs.config.EnableProfiling {
+		hs.setupProfilingRoutes(router)
+	}
+	
+	return router
+}
+
+// requestLoggingMiddleware logs incoming health check requests
+func (hs *HealthServer) requestLoggingMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		
+		// Process request
+		c.Next()
+		
+		// Log request details
+		latency := time.Since(start)
+		hs.logger.Debug("Health check request",
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.Request.URL.Path),
+			zap.Int("status", c.Writer.Status()),
+			zap.Duration("latency", latency),
+		)
+	}
+}
+
+// timeoutMiddleware adds timeout handling to requests
+func (hs *HealthServer) timeoutMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), hs.config.CheckTimeout)
+		defer cancel()
+		
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
+// setupProfilingRoutes adds profiling endpoints if enabled
+func (hs *HealthServer) setupProfilingRoutes(router *gin.Engine) {
+	// Add pprof routes under /debug/pprof/
+	debugGroup := router.Group("/debug/pprof")
+	{
+		debugGroup.GET("/", gin.WrapF(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<html>
+<head><title>/debug/pprof/</title></head>
+<body>
+<h1>/debug/pprof/</h1>
+<p>Profiles:</p>
+<ul>
+<li><a href="goroutine?debug=1">goroutine</a></li>
+<li><a href="heap?debug=1">heap</a></li>
+<li><a href="threadcreate?debug=1">threadcreate</a></li>
+<li><a href="block?debug=1">block</a></li>
+</ul>
+</body>
+</html>`)
+		}))
+	}
+}
+
+// invalidateCache clears the cached health and readiness results
+func (hs *HealthServer) invalidateCache() {
+	hs.healthMutex.Lock()
+	hs.cachedHealth = nil
+	hs.healthMutex.Unlock()
+	
+	hs.readinessMutex.Lock()
+	hs.cachedReadiness = nil
+	hs.readinessMutex.Unlock()
+}
+
+// Component Health Checkers
+
+// checkSyncEngineHealth verifies the sync engine status and worker health
+func (hs *HealthServer) checkSyncEngineHealth() ComponentHealth {
+	start := time.Now()
+	health := ComponentHealth{
+		Name:      "sync_engine",
+		LastCheck: start,
+		Metrics:   make(map[string]interface{}),
+	}
+
+	defer func() {
+		health.Duration = time.Since(start)
+	}()
+
+	if hs.engine == nil {
+		health.Status = StatusUnhealthy
+		health.Error = "sync engine is nil"
+		return health
+	}
+
+	// Check if sync engine is ready
+	ctx, cancel := context.WithTimeout(context.Background(), hs.config.CheckTimeout)
+	defer cancel()
+
+	// Get engine status
+	engineStatus := hs.engine.GetStatus()
+	if engineStatus != nil {
+		health.Metrics["state"] = engineStatus.State
+		health.Metrics["active_syncs"] = engineStatus.ActiveSyncs
+		health.Metrics["total_syncs"] = engineStatus.TotalSyncs
+		health.Metrics["failed_syncs"] = engineStatus.FailedSyncs
+		
+		// Overall engine health assessment
+		switch engineStatus.State {
+		case "running", "idle":
+			health.Status = StatusHealthy
+		case "starting", "stopping":
+			health.Status = StatusDegraded
+			health.Error = fmt.Sprintf("engine is in %s state", engineStatus.State)
+		default:
+			health.Status = StatusUnhealthy
+			health.Error = fmt.Sprintf("unknown engine state: %s", engineStatus.State)
+		}
+	} else {
+		health.Status = StatusUnhealthy
+		health.Error = "failed to get engine status"
+	}
+
+	return health
+}
+
+// checkStateManagerHealth verifies state manager connectivity and data integrity
+func (hs *HealthServer) checkStateManagerHealth() ComponentHealth {
+	start := time.Now()
+	health := ComponentHealth{
+		Name:      "state_manager",
+		LastCheck: start,
+		Metrics:   make(map[string]interface{}),
+	}
+
+	defer func() {
+		health.Duration = time.Since(start)
+	}()
+
+	if hs.stateManager == nil {
+		health.Status = StatusUnhealthy
+		health.Error = "state manager is nil"
+		return health
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), hs.config.CheckTimeout)
+	defer cancel()
+
+	// Basic state manager health check - try to load the current state
+	if err := hs.stateManager.Load(); err != nil {
+		health.Status = StatusDegraded
+		health.Error = fmt.Sprintf("failed to load state: %v", err)
+		return health
+	}
+
+	// Try to save the current state (this tests write capability)
+	if err := hs.stateManager.Save(); err != nil {
+		health.Status = StatusDegraded
+		health.Error = fmt.Sprintf("failed to save state: %v", err)
+		return health
+	}
+
+	// Get current state for basic metrics
+	currentState := hs.stateManager.GetState()
+	if currentState != nil {
+		health.Metrics["sync_in_progress"] = currentState.SyncInProgress
+		health.Metrics["current_sync_id"] = currentState.CurrentSyncID
+		health.Metrics["sync_errors"] = len(currentState.SyncErrors)
+		health.Metrics["resource_mappings"] = len(currentState.ResourceMappings)
+	}
+
+	health.Status = StatusHealthy
+	return health
+}
+
+// checkDatabaseHealth verifies database connectivity (if applicable)
+func (hs *HealthServer) checkDatabaseHealth() ComponentHealth {
+	start := time.Now()
+	health := ComponentHealth{
+		Name:      "database",
+		LastCheck: start,
+		Metrics:   make(map[string]interface{}),
+	}
+
+	defer func() {
+		health.Duration = time.Since(start)
+	}()
+
+	// For this implementation, we're using file-based state storage
+	// So we'll check the file system health instead
+	
+	ctx, cancel := context.WithTimeout(context.Background(), hs.config.CheckTimeout)
+	defer cancel()
+
+	// Check if state manager's storage is accessible
+	if hs.stateManager != nil {
+		// Try basic file operations to test storage health
+		if err := hs.stateManager.Load(); err != nil {
+			health.Status = StatusDegraded
+			health.Error = fmt.Sprintf("storage read test failed: %v", err)
+			return health
+		}
+
+		// Basic storage metrics
+		health.Metrics["storage_type"] = "file"
+		health.Metrics["last_accessed"] = time.Now()
+	}
+
+	health.Status = StatusHealthy
+	return health
+}
+
+// checkExternalServicesHealth verifies connectivity to external APIs and services
+func (hs *HealthServer) checkExternalServicesHealth() ComponentHealth {
+	start := time.Now()
+	health := ComponentHealth{
+		Name:      "external_services",
+		LastCheck: start,
+		Metrics:   make(map[string]interface{}),
+	}
+
+	defer func() {
+		health.Duration = time.Since(start)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), hs.config.CheckTimeout)
+	defer cancel()
+
+	// Check engine health as a proxy for external services
+	if hs.engine != nil {
+		engineStatus := hs.engine.GetStatus()
+		if engineStatus != nil {
+			health.Metrics["engine_state"] = engineStatus.State
+			health.Metrics["active_syncs"] = engineStatus.ActiveSyncs
+			health.Metrics["total_syncs"] = engineStatus.TotalSyncs
+			health.Metrics["failed_syncs"] = engineStatus.FailedSyncs
+			
+			// Check if engine is healthy (proxy for external connectivity)
+			if engineStatus.State == "error" {
+				health.Status = StatusUnhealthy
+				health.Error = "sync engine is in error state"
+				return health
+			}
+			
+			// Check for excessive failures
+			if engineStatus.TotalSyncs > 0 {
+				failureRate := float64(engineStatus.FailedSyncs) / float64(engineStatus.TotalSyncs)
+				if failureRate > 0.5 {
+					health.Status = StatusDegraded
+					health.Error = "high sync failure rate detected"
+					return health
+				}
+			}
+		}
+	}
+
+	// Test DNS resolution if needed
+	select {
+	case <-ctx.Done():
+		health.Status = StatusDegraded
+		health.Error = "external services health check timed out"
+		return health
+	default:
+		// Continue with health check
+	}
+
+	health.Status = StatusHealthy
+	return health
+}
+
+// performHealthChecks executes all component health checks concurrently
+func (hs *HealthServer) performHealthChecks(ctx context.Context) map[string]ComponentHealth {
+	results := make(map[string]ComponentHealth)
+	resultsChan := make(chan struct {
+		name   string
+		health ComponentHealth
+	}, len(hs.componentChecks))
+
+	// Execute all health checks concurrently
+	for name, checker := range hs.componentChecks {
+		go func(checkName string, checkFunc func() ComponentHealth) {
+			defer func() {
+				if r := recover(); r != nil {
+					resultsChan <- struct {
+						name   string
+						health ComponentHealth
+					}{
+						name: checkName,
+						health: ComponentHealth{
+							Name:      checkName,
+							Status:    StatusUnhealthy,
+							LastCheck: time.Now(),
+							Error:     fmt.Sprintf("health check panicked: %v", r),
+							Duration:  0,
+						},
+					}
+				}
+			}()
+
+			result := checkFunc()
+			resultsChan <- struct {
+				name   string
+				health ComponentHealth
+			}{
+				name:   checkName,
+				health: result,
+			}
+		}(name, checker)
+	}
+
+	// Collect results with timeout
+	collected := 0
+	timeout := time.NewTimer(hs.config.CheckTimeout)
+	defer timeout.Stop()
+
+	for collected < len(hs.componentChecks) {
+		select {
+		case result := <-resultsChan:
+			results[result.name] = result.health
+			collected++
+		case <-timeout.C:
+			// Timeout reached, mark remaining checks as timed out
+			for name := range hs.componentChecks {
+				if _, exists := results[name]; !exists {
+					results[name] = ComponentHealth{
+						Name:      name,
+						Status:    StatusUnhealthy,
+						LastCheck: time.Now(),
+						Error:     "health check timed out",
+						Duration:  hs.config.CheckTimeout,
+					}
+				}
+			}
+			collected = len(hs.componentChecks)
+		case <-ctx.Done():
+			// Context cancelled
+			for name := range hs.componentChecks {
+				if _, exists := results[name]; !exists {
+					results[name] = ComponentHealth{
+						Name:      name,
+						Status:    StatusUnhealthy,
+						LastCheck: time.Now(),
+						Error:     "health check cancelled",
+						Duration:  0,
+					}
+				}
+			}
+			collected = len(hs.componentChecks)
+		}
+	}
+
+	return results
+}
+
+// Health Endpoint Handlers
+
+// healthHandler implements the /health endpoint for liveness checks
+func (hs *HealthServer) healthHandler(c *gin.Context) {
+	ctx := c.Request.Context()
+	
+	// Check if we're shutting down
+	if hs.IsShuttingDown() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status": "shutting_down",
+			"message": "server is shutting down",
+		})
+		return
+	}
+
+	// Check cache first
+	hs.healthMutex.RLock()
+	if hs.cachedHealth != nil && time.Since(hs.lastHealthCheck) < hs.config.CacheExpiry {
+		cached := *hs.cachedHealth
+		hs.healthMutex.RUnlock()
+		
+		// Return cached result with appropriate status code
+		statusCode := hs.getHealthStatusCode(cached.Status)
+		c.JSON(statusCode, cached)
+		return
+	}
+	hs.healthMutex.RUnlock()
+
+	// Perform health checks
+	components := hs.performHealthChecks(ctx)
+	
+	// Aggregate overall health status
+	overallStatus := hs.aggregateHealthStatus(components)
+	
+	// Create health response
+	health := &OverallHealth{
+		Status:     overallStatus,
+		Version:    hs.version,
+		Uptime:     time.Since(hs.startTime).Seconds(),
+		Timestamp:  time.Now(),
+		Components: components,
+	}
+
+	// Cache the result
+	hs.healthMutex.Lock()
+	hs.cachedHealth = health
+	hs.lastHealthCheck = time.Now()
+	hs.healthMutex.Unlock()
+
+	// Return response with appropriate status code
+	statusCode := hs.getHealthStatusCode(overallStatus)
+	c.JSON(statusCode, health)
+}
+
+// livenessHandler implements the /live endpoint for basic liveness checks
+func (hs *HealthServer) livenessHandler(c *gin.Context) {
+	// Basic liveness check - just verify the process is running
+	if hs.IsShuttingDown() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"alive": false,
+			"status": "shutting_down",
+			"timestamp": time.Now(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"alive": true,
+		"status": "running",
+		"uptime": time.Since(hs.startTime).Seconds(),
+		"timestamp": time.Now(),
+	})
+}
+
+// detailedMetricsHandler provides detailed health metrics
+func (hs *HealthServer) detailedMetricsHandler(c *gin.Context) {
+	ctx := c.Request.Context()
+	
+	// Get current health status
+	components := hs.performHealthChecks(ctx)
+	
+	// Collect additional metrics
+	metrics := map[string]interface{}{
+		"uptime_seconds": time.Since(hs.startTime).Seconds(),
+		"version": hs.version,
+		"timestamp": time.Now(),
+		"components": components,
+	}
+
+	// Add runtime metrics if enabled
+	if hs.config.EnableDetailedMetrics {
+		runtimeMetrics := hs.collectRuntimeMetrics()
+		metrics["runtime"] = runtimeMetrics
+	}
+
+	// Add sync engine specific metrics
+	if hs.engine != nil {
+		engineMetrics := hs.collectEngineMetrics()
+		metrics["engine"] = engineMetrics
+	}
+
+	// Add state manager metrics
+	if hs.stateManager != nil {
+		stateMetrics := hs.collectStateMetrics()
+		metrics["state"] = stateMetrics
+	}
+
+	c.JSON(http.StatusOK, metrics)
+}
+
+// aggregateHealthStatus determines overall health from component statuses
+func (hs *HealthServer) aggregateHealthStatus(components map[string]ComponentHealth) ComponentStatus {
+	if len(components) == 0 {
+		return StatusUnhealthy
+	}
+
+	hasUnhealthy := false
+	hasDegraded := false
+
+	for _, component := range components {
+		switch component.Status {
+		case StatusUnhealthy:
+			hasUnhealthy = true
+		case StatusDegraded:
+			hasDegraded = true
+		}
+	}
+
+	// Determine overall status
+	if hasUnhealthy {
+		return StatusUnhealthy
+	} else if hasDegraded {
+		return StatusDegraded
+	}
+	
+	return StatusHealthy
+}
+
+// getHealthStatusCode returns the appropriate HTTP status code for health status
+func (hs *HealthServer) getHealthStatusCode(status ComponentStatus) int {
+	switch status {
+	case StatusHealthy:
+		return http.StatusOK
+	case StatusDegraded:
+		return http.StatusOK // Still OK, but degraded
+	case StatusUnhealthy:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// collectRuntimeMetrics gathers Go runtime metrics
+func (hs *HealthServer) collectRuntimeMetrics() map[string]interface{} {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	return map[string]interface{}{
+		"goroutines": runtime.NumGoroutine(),
+		"memory": map[string]interface{}{
+			"alloc_bytes":        m.Alloc,
+			"total_alloc_bytes":  m.TotalAlloc,
+			"sys_bytes":          m.Sys,
+			"num_gc":             m.NumGC,
+			"gc_cpu_fraction":    m.GCCPUFraction,
+			"heap_alloc_bytes":   m.HeapAlloc,
+			"heap_sys_bytes":     m.HeapSys,
+			"heap_idle_bytes":    m.HeapIdle,
+			"heap_inuse_bytes":   m.HeapInuse,
+			"heap_released_bytes": m.HeapReleased,
+			"heap_objects":       m.HeapObjects,
+		},
+		"gc": map[string]interface{}{
+			"num_gc":           m.NumGC,
+			"pause_total_ns":   m.PauseTotalNs,
+			"pause_ns":         m.PauseNs[(m.NumGC+255)%256],
+			"gc_cpu_fraction":  m.GCCPUFraction,
+		},
+	}
+}
+
+// collectEngineMetrics gathers sync engine specific metrics
+func (hs *HealthServer) collectEngineMetrics() map[string]interface{} {
+	if hs.engine == nil {
+		return map[string]interface{}{
+			"status": "not_available",
+		}
+	}
+
+	metrics := map[string]interface{}{
+		"status": hs.engine.GetStatus(),
+		"connected_sources": hs.engine.GetConnectedSources(),
+	}
+
+	// Add worker pool metrics
+	if workerPool := hs.engine.GetWorkerPool(); workerPool != nil {
+		workerStats := workerPool.GetStatistics()
+		metrics["worker_pool"] = map[string]interface{}{
+			"active_workers":   workerStats.ActiveWorkers,
+			"queued_jobs":      workerStats.QueuedJobs,
+			"completed_jobs":   workerStats.CompletedJobs,
+			"failed_jobs":      workerStats.FailedJobs,
+			"total_processed":  workerStats.TotalProcessed,
+			"success_rate":     workerStats.SuccessRate,
+			"average_duration": workerStats.AverageDuration.Milliseconds(),
+		}
+	}
+
+	// Add scheduler metrics
+	if scheduler := hs.engine.GetScheduler(); scheduler != nil {
+		schedulerStats := scheduler.GetStatistics()
+		metrics["scheduler"] = map[string]interface{}{
+			"scheduled_jobs":    schedulerStats.ScheduledJobs,
+			"next_run":          schedulerStats.NextRun,
+			"last_run":          schedulerStats.LastRun,
+			"total_executions":  schedulerStats.TotalExecutions,
+			"failed_executions": schedulerStats.FailedExecutions,
+		}
+	}
+
+	// Add orchestrator metrics
+	if orchestrator := hs.engine.GetOrchestrator(); orchestrator != nil {
+		orchStats := orchestrator.GetStatistics()
+		metrics["orchestrator"] = map[string]interface{}{
+			"active_syncs":       orchStats.ActiveSyncs,
+			"completed_syncs":    orchStats.CompletedSyncs,
+			"failed_syncs":       orchStats.FailedSyncs,
+			"total_resources":    orchStats.TotalResources,
+			"synced_resources":   orchStats.SyncedResources,
+			"average_sync_time":  orchStats.AverageSyncTime.Milliseconds(),
+		}
+
+		// Add connection statistics
+		connStats := orchestrator.GetConnectionStatistics()
+		metrics["connections"] = map[string]interface{}{
+			"total_connections":   connStats.TotalConnections,
+			"healthy_connections": connStats.HealthyConnections,
+			"failed_connections":  connStats.FailedConnections,
+			"average_latency":     connStats.AverageLatency.Milliseconds(),
+		}
+	}
+
+	return metrics
+}
+
+// collectStateMetrics gathers state manager specific metrics
+func (hs *HealthServer) collectStateMetrics() map[string]interface{} {
+	if hs.stateManager == nil {
+		return map[string]interface{}{
+			"status": "not_available",
+		}
+	}
+
+	// Get state statistics
+	stats := hs.stateManager.GetStatistics()
+	metrics := map[string]interface{}{
+		"total_states":      stats.TotalStates,
+		"active_syncs":      stats.ActiveSyncs,
+		"completed_syncs":   stats.CompletedSyncs,
+		"failed_syncs":      stats.FailedSyncs,
+		"disk_usage":        stats.DiskUsage,
+		"last_backup":       stats.LastBackup,
+		"backup_count":      stats.BackupCount,
+		"total_mappings":    stats.TotalMappings,
+		"active_mappings":   stats.ActiveMappings,
+		"orphaned_mappings": stats.OrphanedMappings,
+	}
+
+	// Get backup information
+	backupInfo := hs.stateManager.GetBackupInfo()
+	metrics["backup"] = map[string]interface{}{
+		"backup_count":    backupInfo.BackupCount,
+		"last_backup":     backupInfo.LastBackup,
+		"total_size":      backupInfo.TotalSize,
+		"oldest_backup":   backupInfo.OldestBackup,
+		"newest_backup":   backupInfo.NewestBackup,
+	}
+
+	// Get error statistics
+	errorStats := hs.stateManager.GetErrorStatistics()
+	metrics["errors"] = map[string]interface{}{
+		"total_errors":       errorStats.TotalErrors,
+		"critical_errors":    errorStats.CriticalErrors,
+		"warning_errors":     errorStats.WarningErrors,
+		"info_errors":        errorStats.InfoErrors,
+		"resolved_errors":    errorStats.ResolvedErrors,
+		"pending_retries":    errorStats.PendingRetries,
+		"max_retry_reached":  errorStats.MaxRetryReached,
+	}
+
+	return metrics
+}
+
+// Readiness Endpoint Handler
+
+// readyHandler implements the /ready endpoint for readiness checks
+func (hs *HealthServer) readyHandler(c *gin.Context) {
+	ctx := c.Request.Context()
+	
+	// Check if we're shutting down
+	if hs.IsShuttingDown() {
+		c.JSON(http.StatusServiceUnavailable, ReadinessStatus{
+			Ready:  false,
+			Reason: "server is shutting down",
+			InitializationAge: time.Since(hs.startTime),
+		})
+		return
+	}
+
+	// Check grace period - don't report ready until grace period has passed
+	if time.Since(hs.startTime) < hs.config.GracePeriod {
+		c.JSON(http.StatusServiceUnavailable, ReadinessStatus{
+			Ready:  false,
+			Reason: fmt.Sprintf("still in grace period (%.0fs remaining)", 
+				(hs.config.GracePeriod - time.Since(hs.startTime)).Seconds()),
+			InitializationAge: time.Since(hs.startTime),
+		})
+		return
+	}
+
+	// Check cache first
+	hs.readinessMutex.RLock()
+	if hs.cachedReadiness != nil && time.Since(hs.lastReadinessCheck) < hs.config.CacheExpiry {
+		cached := *hs.cachedReadiness
+		hs.readinessMutex.RUnlock()
+		
+		// Return cached result with appropriate status code
+		statusCode := http.StatusOK
+		if !cached.Ready {
+			statusCode = http.StatusServiceUnavailable
+		}
+		c.JSON(statusCode, cached)
+		return
+	}
+	hs.readinessMutex.RUnlock()
+
+	// Perform readiness checks
+	readiness := hs.performReadinessChecks(ctx)
+
+	// Cache the result
+	hs.readinessMutex.Lock()
+	hs.cachedReadiness = readiness
+	hs.lastReadinessCheck = time.Now()
+	hs.readinessMutex.Unlock()
+
+	// Return response with appropriate status code
+	statusCode := http.StatusOK
+	if !readiness.Ready {
+		statusCode = http.StatusServiceUnavailable
+	}
+	c.JSON(statusCode, readiness)
+}
+
+// performReadinessChecks executes all readiness validations
+func (hs *HealthServer) performReadinessChecks(ctx context.Context) *ReadinessStatus {
+	readiness := &ReadinessStatus{
+		Ready:             true,
+		Components:        make(map[string]ComponentHealth),
+		InitializationAge: time.Since(hs.startTime),
+	}
+
+	// Check sync engine readiness
+	if !hs.checkSyncEngineReadiness(readiness) {
+		return readiness
+	}
+
+	// Check state manager readiness
+	if !hs.checkStateManagerReadiness(readiness) {
+		return readiness
+	}
+
+	// Check database/storage readiness
+	if !hs.checkStorageReadiness(readiness) {
+		return readiness
+	}
+
+	// Check external services connectivity
+	if !hs.checkExternalServicesReadiness(readiness) {
+		return readiness
+	}
+
+	// Get additional metrics
+	hs.populateReadinessMetrics(readiness)
+
+	// All checks passed
+	readiness.Ready = true
+	readiness.Reason = "all systems ready"
+
+	return readiness
+}
+
+// checkSyncEngineReadiness verifies sync engine is ready to process requests
+func (hs *HealthServer) checkSyncEngineReadiness(readiness *ReadinessStatus) bool {
+	if hs.engine == nil {
+		readiness.Ready = false
+		readiness.Reason = "sync engine not initialized"
+		readiness.Components["sync_engine"] = ComponentHealth{
+			Name:      "sync_engine",
+			Status:    StatusUnhealthy,
+			LastCheck: time.Now(),
+			Error:     "sync engine is nil",
+		}
+		return false
+	}
+
+	// Check if engine is in a ready state
+	engineStatus := hs.engine.GetStatus()
+	if engineStatus != "running" && engineStatus != "idle" {
+		readiness.Ready = false
+		readiness.Reason = fmt.Sprintf("sync engine not ready (status: %s)", engineStatus)
+		readiness.Components["sync_engine"] = ComponentHealth{
+			Name:      "sync_engine",
+			Status:    StatusUnhealthy,
+			LastCheck: time.Now(),
+			Error:     fmt.Sprintf("engine status is %s", engineStatus),
+		}
+		return false
+	}
+
+	// Check worker pool readiness
+	if workerPool := hs.engine.GetWorkerPool(); workerPool != nil {
+		workerStats := workerPool.GetStatistics()
+		readiness.WorkersActive = workerStats.ActiveWorkers
+		readiness.QueueSize = workerStats.QueuedJobs
+
+		// Ensure minimum number of workers are available
+		if workerStats.ActiveWorkers == 0 {
+			readiness.Ready = false
+			readiness.Reason = "no active workers available"
+			readiness.Components["worker_pool"] = ComponentHealth{
+				Name:      "worker_pool",
+				Status:    StatusUnhealthy,
+				LastCheck: time.Now(),
+				Error:     "no active workers",
+			}
+			return false
+		}
+	}
+
+	readiness.Components["sync_engine"] = ComponentHealth{
+		Name:      "sync_engine",
+		Status:    StatusHealthy,
+		LastCheck: time.Now(),
+	}
+
+	return true
+}
+
+// checkStateManagerReadiness verifies state manager is ready for operations
+func (hs *HealthServer) checkStateManagerReadiness(readiness *ReadinessStatus) bool {
+	if hs.stateManager == nil {
+		readiness.Ready = false
+		readiness.Reason = "state manager not initialized"
+		readiness.Components["state_manager"] = ComponentHealth{
+			Name:      "state_manager",
+			Status:    StatusUnhealthy,
+			LastCheck: time.Now(),
+			Error:     "state manager is nil",
+		}
+		return false
+	}
+
+	// Test basic state manager operations
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Quick test to ensure state manager is responsive
+	testKey := fmt.Sprintf("readiness_test_%d", time.Now().Unix())
+	testState := &state.SyncState{
+		ID:          testKey,
+		StartedAt:   time.Now(),
+		Status:      "readiness_test",
+		Description: "Readiness check test",
+	}
+
+	// Try to save and retrieve test state
+	if err := hs.stateManager.SaveState(ctx, testState); err != nil {
+		readiness.Ready = false
+		readiness.Reason = "state manager save operation failed"
+		readiness.Components["state_manager"] = ComponentHealth{
+			Name:      "state_manager",
+			Status:    StatusUnhealthy,
+			LastCheck: time.Now(),
+			Error:     fmt.Sprintf("save failed: %v", err),
+		}
+		return false
+	}
+
+	// Clean up test state
+	if err := hs.stateManager.DeleteState(ctx, testKey); err != nil {
+		// This is not critical for readiness but log it
+		hs.logger.Warn("Failed to clean up readiness test state", zap.Error(err))
+	}
+
+	readiness.Components["state_manager"] = ComponentHealth{
+		Name:      "state_manager",
+		Status:    StatusHealthy,
+		LastCheck: time.Now(),
+	}
+
+	return true
+}
+
+// checkStorageReadiness verifies storage systems are accessible
+func (hs *HealthServer) checkStorageReadiness(readiness *ReadinessStatus) bool {
+	// For file-based storage, check disk space and permissions
+	if hs.stateManager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Check state consistency
+		if err := hs.stateManager.ValidateStateConsistency(ctx); err != nil {
+			readiness.Ready = false
+			readiness.Reason = "storage consistency check failed"
+			readiness.Components["storage"] = ComponentHealth{
+				Name:      "storage",
+				Status:    StatusUnhealthy,
+				LastCheck: time.Now(),
+				Error:     fmt.Sprintf("consistency check failed: %v", err),
+			}
+			return false
+		}
+
+		// Check disk usage
+		stats := hs.stateManager.GetStatistics()
+		if stats.DiskUsage > 0.95 { // 95% disk usage
+			readiness.Ready = false
+			readiness.Reason = "critically low disk space"
+			readiness.Components["storage"] = ComponentHealth{
+				Name:      "storage",
+				Status:    StatusUnhealthy,
+				LastCheck: time.Now(),
+				Error:     fmt.Sprintf("disk usage at %.1f%%", stats.DiskUsage*100),
+			}
+			return false
+		}
+	}
+
+	readiness.Components["storage"] = ComponentHealth{
+		Name:      "storage",
+		Status:    StatusHealthy,
+		LastCheck: time.Now(),
+	}
+
+	return true
+}
+
+// checkExternalServicesReadiness verifies external service connectivity
+func (hs *HealthServer) checkExternalServicesReadiness(readiness *ReadinessStatus) bool {
+	if hs.engine == nil {
+		// Engine already checked, so this shouldn't happen
+		return true
+	}
+
+	// Get connected sources count
+	connectedSources := hs.engine.GetConnectedSources()
+	readiness.SourcesConnected = connectedSources
+
+	// Check if we have at least one source connected
+	if connectedSources == 0 {
+		readiness.Ready = false
+		readiness.Reason = "no external sources connected"
+		readiness.Components["external_services"] = ComponentHealth{
+			Name:      "external_services",
+			Status:    StatusUnhealthy,
+			LastCheck: time.Now(),
+			Error:     "no external sources connected",
+		}
+		return false
+	}
+
+	// Check connection health if orchestrator is available
+	if orchestrator := hs.engine.GetOrchestrator(); orchestrator != nil {
+		connStats := orchestrator.GetConnectionStatistics()
+		
+		// Ensure majority of connections are healthy
+		if connStats.TotalConnections > 0 {
+			healthyRatio := float64(connStats.HealthyConnections) / float64(connStats.TotalConnections)
+			if healthyRatio < 0.5 {
+				readiness.Ready = false
+				readiness.Reason = "majority of external connections are unhealthy"
+				readiness.Components["external_services"] = ComponentHealth{
+					Name:      "external_services",
+					Status:    StatusUnhealthy,
+					LastCheck: time.Now(),
+					Error:     fmt.Sprintf("only %.1f%% of connections are healthy", healthyRatio*100),
+				}
+				return false
+			}
+		}
+	}
+
+	readiness.Components["external_services"] = ComponentHealth{
+		Name:      "external_services",
+		Status:    StatusHealthy,
+		LastCheck: time.Now(),
+	}
+
+	return true
+}
+
+// populateReadinessMetrics adds additional metrics to readiness response
+func (hs *HealthServer) populateReadinessMetrics(readiness *ReadinessStatus) {
+	// Get last sync time from state manager
+	if hs.stateManager != nil {
+		if lastSyncInfo := hs.stateManager.GetLastSyncInfo(); lastSyncInfo != nil {
+			readiness.LastSync = &lastSyncInfo.CompletedAt
+		}
+	}
+
+	// Update worker and queue metrics if not already set
+	if hs.engine != nil {
+		if workerPool := hs.engine.GetWorkerPool(); workerPool != nil {
+			workerStats := workerPool.GetStatistics()
+			if readiness.WorkersActive == 0 {
+				readiness.WorkersActive = workerStats.ActiveWorkers
+			}
+			if readiness.QueueSize == 0 {
+				readiness.QueueSize = workerStats.QueuedJobs
+			}
+		}
+
+		// Update sources connected if not already set
+		if readiness.SourcesConnected == 0 {
+			readiness.SourcesConnected = hs.engine.GetConnectedSources()
+		}
+	}
+}
+
+// HTTP Server Management
+
+// StartHealthServer starts the health check HTTP server
+func (hs *HealthServer) StartHealthServer(ctx context.Context, addr string) error {
+	router := hs.SetupRoutes()
+	
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      router,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		hs.logger.Info("Starting health server", zap.String("addr", addr))
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case err := <-serverErr:
+		return fmt.Errorf("health server failed to start: %w", err)
+	case <-ctx.Done():
+		// Graceful shutdown
+		hs.logger.Info("Shutting down health server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		return server.Shutdown(shutdownCtx)
+	case <-time.After(100 * time.Millisecond):
+		// Server started successfully
+		hs.logger.Info("Health server started successfully", zap.String("addr", addr))
+		return nil
+	}
+}

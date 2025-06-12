@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-replicator
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: service
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: health
+    protocol: TCP
+  selector:
+    app: harbor-replicator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-replicator-metrics
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: harbor-replicator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-replicator-headless
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+    protocol: TCP
+  - name: health
+    port: 8080
+    targetPort: health
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: harbor-replicator

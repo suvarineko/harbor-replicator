@@ -1,0 +1,356 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Harbor Replicator Monitoring",
+    "tags": ["harbor", "replicator", "synchronization"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "label": "Harbor Instance",
+          "query": "label_values(harbor_replicator_sync_total, source)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "allValue": ".*"
+        },
+        {
+          "name": "resource_type",
+          "type": "query",
+          "label": "Resource Type",
+          "query": "label_values(harbor_replicator_resources_synced, type)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "allValue": ".*"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Sync Operations Overview",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(rate(harbor_replicator_sync_total[5m]))",
+            "legendFormat": "Sync Rate",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": {"mode": "palette-classic"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 5},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Sync Success Rate",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(rate(harbor_replicator_sync_total{status=\"success\"}[5m])) / sum(rate(harbor_replicator_sync_total[5m])) * 100",
+            "legendFormat": "Success Rate",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "color": {"mode": "palette-classic"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 90},
+                {"color": "green", "value": 95}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Active Sync Operations",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+        "targets": [
+          {
+            "expr": "harbor_replicator_active_sync_operations",
+            "legendFormat": "Active Operations",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 5},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Sync Duration Distribution",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(harbor_replicator_sync_duration_seconds_bucket{source=~\"$instance\", resource_type=~\"$resource_type\"}[5m])) by (le))",
+            "legendFormat": "95th percentile",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(harbor_replicator_sync_duration_seconds_bucket{source=~\"$instance\", resource_type=~\"$resource_type\"}[5m])) by (le))",
+            "legendFormat": "50th percentile",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Duration",
+            "unit": "s",
+            "min": 0
+          }
+        ],
+        "xAxes": [
+          {
+            "mode": "time"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Error Rate by Type",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+        "targets": [
+          {
+            "expr": "sum(rate(harbor_replicator_sync_errors_total{resource_type=~\"$resource_type\"}[5m])) by (error_type)",
+            "legendFormat": "{{error_type}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Errors/sec",
+            "unit": "short",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Resources Synchronized",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+        "targets": [
+          {
+            "expr": "sum(rate(harbor_replicator_resources_synced{source=~\"$instance\", type=~\"$resource_type\"}[5m])) by (type, operation)",
+            "legendFormat": "{{type}} - {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Resources/sec",
+            "unit": "short",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "API Call Latency",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(harbor_replicator_api_call_latency_seconds_bucket{source=~\"$instance\"}[5m])) by (le, endpoint))",
+            "legendFormat": "{{endpoint}} (95th)",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency",
+            "unit": "s",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Harbor Instance Health",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 22},
+        "targets": [
+          {
+            "expr": "harbor_replicator_harbor_instance_health",
+            "legendFormat": "{{instance}} ({{type}})",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"options": {"0": {"text": "Unhealthy", "color": "red"}}, "type": "value"},
+              {"options": {"1": {"text": "Healthy", "color": "green"}}, "type": "value"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Replication Lag",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 22},
+        "targets": [
+          {
+            "expr": "harbor_replicator_replication_lag_seconds",
+            "legendFormat": "{{source}} -> {{target}} ({{resource_type}})",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Lag",
+            "unit": "s",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Resource Queue Size",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 22},
+        "targets": [
+          {
+            "expr": "harbor_replicator_resource_queue_size",
+            "legendFormat": "{{resource_type}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Queue Size",
+            "unit": "short",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Configuration Drift",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+        "targets": [
+          {
+            "expr": "harbor_replicator_configuration_drift",
+            "legendFormat": "",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"__name__": true, "job": true},
+              "renameByName": {
+                "source": "Source Instance",
+                "target": "Target Instance",
+                "resource_type": "Resource Type",
+                "Value": "Drift Count"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Resource Quota Usage",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+        "targets": [
+          {
+            "expr": "harbor_replicator_resource_quota_usage_percent",
+            "legendFormat": "{{instance}} - {{resource_type}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "red", "value": 90}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Last Successful Sync",
+        "type": "table",
+        "gridPos": {"h": 6, "w": 24, "x": 0, "y": 36},
+        "targets": [
+          {
+            "expr": "harbor_replicator_last_successful_sync_timestamp",
+            "legendFormat": "",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"__name__": true, "job": true},
+              "renameByName": {
+                "source": "Source Instance",
+                "resource_type": "Resource Type",
+                "Value": "Last Sync Time"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

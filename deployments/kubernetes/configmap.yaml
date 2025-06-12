@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-replicator-config
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: config
+data:
+  config.yaml: |
+    harbor:
+      source:
+        name: "source-harbor"
+        url: "https://harbor.example.com"
+        username: "admin"
+        password: "Harbor12345"
+        timeout: "30s"
+        rate_limit:
+          requests_per_second: 10.0
+          burst_size: 20
+          timeout: "5s"
+        circuit_breaker:
+          enabled: true
+          failure_threshold: 5
+          timeout: "60s"
+          interval: "30s"
+        retry:
+          max_attempts: 3
+          initial_delay: "1s"
+          max_delay: "30s"
+          multiplier: 2.0
+      targets:
+        - name: "target-harbor-1"
+          url: "https://target-harbor-1.example.com"
+          username: "admin"
+          password: "Harbor12345"
+          timeout: "30s"
+          rate_limit:
+            requests_per_second: 10.0
+            burst_size: 20
+            timeout: "5s"
+          circuit_breaker:
+            enabled: true
+            failure_threshold: 5
+            timeout: "60s"
+            interval: "30s"
+          retry:
+            max_attempts: 3
+            initial_delay: "1s"
+            max_delay: "30s"
+            multiplier: 2.0
+
+    sync:
+      interval: "5m"
+      robots:
+        enabled: true
+        strategy: "mirror"
+        conflict_resolution:
+          strategy: "source_wins"
+          backup_before: true
+        filter:
+          include_patterns: ["*"]
+          exclude_patterns: ["test-*", "temp-*"]
+      oidc_groups:
+        enabled: true
+        group_filter: ["*"]
+        exclude: ["admin-*"]
+        sync_permissions: true
+        sync_project_associations: true
+
+    logging:
+      level: "info"
+      format: "json"
+      output: ["stdout"]
+      sanitize_fields: ["password", "token", "secret"]
+      correlation_id:
+        enabled: true
+        header: "X-Correlation-ID"
+        field_name: "correlation_id"
+        generator: "uuid"
+
+    monitoring:
+      enabled: true
+      prometheus:
+        enabled: true
+        path: "/metrics"
+        port: 9090
+        namespace: "harbor_replicator"
+        subsystem: "sync"
+      health:
+        enabled: true
+        path: "/health"
+        port: 8080
+        ready_path: "/ready"
+        live_path: "/live"
+        check_interval: "30s"
+        check_timeout: "5s"
+        grace_period: "30s"
+        cache_expiry: "10s"
+        enable_profiling: false
+        enable_detailed_metrics: true
+
+    server:
+      host: "0.0.0.0"
+      port: 8000
+      read_timeout: "10s"
+      write_timeout: "10s"
+      idle_timeout: "60s"
+      shutdown_timeout: "30s"
+      tls:
+        enabled: false
+
+    state_manager:
+      storage_type: "file"
+      file_path: "/data/state.json"
+      backup_interval: "1h"
+      backup_retention: 10
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-replicator-secrets
+  namespace: harbor-replicator
+  labels:
+    app: harbor-replicator
+    component: secrets
+data:
+  # Note: In production, use actual Kubernetes Secrets instead of ConfigMap for sensitive data
+  source-password: "Harbor12345"
+  target-1-password: "Harbor12345"

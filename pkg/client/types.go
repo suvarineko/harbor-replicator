@@ -122,13 +122,6 @@ func (e *APIError) Error() string {
 	return e.Message
 }
 
-type HealthCheckResult struct {
-	Healthy     bool
-	Latency     time.Duration
-	Version     string
-	Details     map[string]interface{}
-	LastChecked time.Time
-}
 
 type ClientStats struct {
 	TotalRequests      int64
@@ -152,6 +145,8 @@ type RobotAccount struct {
 	Permissions []RobotPermission `json:"permissions,omitempty"`
 	CreationTime time.Time        `json:"creation_time,omitempty"`
 	UpdateTime   time.Time        `json:"update_time,omitempty"`
+	// Project-specific fields
+	ProjectID   int64             `json:"project_id,omitempty"`
 }
 
 type RobotPermission struct {
@@ -163,6 +158,37 @@ type RobotPermission struct {
 type RobotAccess struct {
 	Resource string `json:"resource"`
 	Action   string `json:"action"`
+}
+
+type Project struct {
+	ProjectID    int64             `json:"project_id,omitempty"`
+	Name         string            `json:"name"`
+	OwnerID      int64             `json:"owner_id,omitempty"`
+	OwnerName    string            `json:"owner_name,omitempty"`
+	CreationTime time.Time         `json:"creation_time,omitempty"`
+	UpdateTime   time.Time         `json:"update_time,omitempty"`
+	Deleted      bool              `json:"deleted,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	CVEAllowlist *CVEAllowlist     `json:"cve_allowlist,omitempty"`
+}
+
+type ProjectRequest struct {
+	ProjectName  string            `json:"project_name"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	CVEAllowlist *CVEAllowlist     `json:"cve_allowlist,omitempty"`
+}
+
+type CVEAllowlist struct {
+	ID           int64     `json:"id,omitempty"`
+	ProjectID    int64     `json:"project_id,omitempty"`
+	ExpiresAt    int64     `json:"expires_at,omitempty"`
+	Items        []CVEItem `json:"items,omitempty"`
+	CreationTime time.Time `json:"creation_time,omitempty"`
+	UpdateTime   time.Time `json:"update_time,omitempty"`
+}
+
+type CVEItem struct {
+	CVEID string `json:"cve_id"`
 }
 
 type OIDCGroup struct {
@@ -231,6 +257,13 @@ type ClientInterface interface {
 	CreateOIDCGroup(ctx context.Context, group *OIDCGroup) (*OIDCGroup, error)
 	UpdateOIDCGroup(ctx context.Context, groupID int64, group *OIDCGroup) (*OIDCGroup, error)
 	DeleteOIDCGroup(ctx context.Context, groupID int64) error
+	
+	// Project operations
+	GetProject(ctx context.Context, projectID int64) (*Project, error)
+	CreateProject(ctx context.Context, project *ProjectRequest) (*Project, error)
+	UpdateProject(ctx context.Context, projectID int64, project *ProjectRequest) (*Project, error)
+	DeleteProject(ctx context.Context, projectID int64) error
+	ListProjects(ctx context.Context) ([]Project, error)
 	
 	// Project associations
 	AddGroupToProject(ctx context.Context, groupID, projectID int64, roleID int64) error

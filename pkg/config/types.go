@@ -199,11 +199,17 @@ type PrometheusConfig struct {
 }
 
 type HealthConfig struct {
-	Enabled    bool   `mapstructure:"enabled" yaml:"enabled"`
-	Path       string `mapstructure:"path" yaml:"path"`
-	Port       int    `mapstructure:"port" yaml:"port"`
-	ReadyPath  string `mapstructure:"ready_path" yaml:"ready_path"`
-	LivePath   string `mapstructure:"live_path" yaml:"live_path"`
+	Enabled           bool          `mapstructure:"enabled" yaml:"enabled"`
+	Path              string        `mapstructure:"path" yaml:"path"`
+	Port              int           `mapstructure:"port" yaml:"port"`
+	ReadyPath         string        `mapstructure:"ready_path" yaml:"ready_path"`
+	LivePath          string        `mapstructure:"live_path" yaml:"live_path"`
+	CheckInterval     time.Duration `mapstructure:"check_interval" yaml:"check_interval"`
+	CheckTimeout      time.Duration `mapstructure:"check_timeout" yaml:"check_timeout"`
+	GracePeriod       time.Duration `mapstructure:"grace_period" yaml:"grace_period"`
+	CacheExpiry       time.Duration `mapstructure:"cache_expiry" yaml:"cache_expiry"`
+	EnableProfiling   bool          `mapstructure:"enable_profiling" yaml:"enable_profiling"`
+	EnableDetailedMetrics bool      `mapstructure:"enable_detailed_metrics" yaml:"enable_detailed_metrics"`
 }
 
 type ServerConfig struct {

@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: harbor-replicator
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+namespace: harbor-replicator
+
+commonLabels:
+  app: harbor-replicator
+
+resources:
+- namespace.yaml
+- secrets.yaml
+- configmap.yaml
+- deployment.yaml
+- service.yaml
+
+images:
+- name: harbor-replicator
+  newTag: latest
+
+replicas:
+- name: harbor-replicator
+  count: 1
+
+configMapGenerator:
+- name: harbor-replicator-config
+  files:
+  - config.yaml
+  options:
+    disableNameSuffixHash: true
+
+patchesStrategicMerge:
+- |-
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: harbor-replicator
+  spec:
+    template:
+      metadata:
+        annotations:
+          config/hash: "will-be-replaced-by-kustomize"
+
+vars:
+- name: NAMESPACE
+  objref:
+    kind: Namespace
+    name: harbor-replicator
+    apiVersion: v1
