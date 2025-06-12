@@ -1,6 +1,6 @@
 # Task ID: 3
 # Title: Create Harbor Client Wrapper
-# Status: pending
+# Status: done
 # Dependencies: 1, 2
 # Priority: high
 # Description: Implement a wrapper around the Harbor go-client v0.210.0 with authentication, connection pooling, and error handling
@@ -95,13 +95,13 @@ Implement ListSystemRobotAccounts and ListProjectRobotAccounts methods with pagi
 ### Details:
 Implement ListOIDCGroups method with support for filtering by group type. Handle pagination for large result sets. Transform API responses to internal UserGroup models. Include proper error handling for OIDC-specific errors
 
-## 9. Add Metrics and Observability [pending]
+## 9. Add Metrics and Observability [done]
 ### Dependencies: 3.6, 3.7, 3.8
 ### Description: Implement metrics collection for monitoring client performance, API call rates, error rates, and circuit breaker states
 ### Details:
 Use Prometheus client library to expose metrics for request count, request duration, error rates by type, circuit breaker state changes, and connection pool statistics. Create middleware to automatically collect metrics for all API calls
 
-## 10. Create Client Health Check and Diagnostics [pending]
+## 10. Create Client Health Check and Diagnostics [done]
 ### Dependencies: 3.6, 3.7, 3.8, 3.9
 ### Description: Implement health check endpoints and diagnostic methods to monitor Harbor client status and connectivity
 ### Details:
