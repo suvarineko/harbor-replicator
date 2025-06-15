@@ -51,3 +51,108 @@ This file documents recurring patterns...
 **Structure**: Engine config → Component configs → Feature configs
 **Features**: Hot-reload support, validation functions, sensible defaults
 **Benefits**: Flexible configuration, operational safety, easy deployment
+
+[2025-06-13 14:24:11] - ## Error Handling and Resilience Patterns Implementation
+
+### Established Patterns for Harbor Replicator
+
+**1. Comprehensive Error Classification Pattern**
+```go
+// Standard error classification approach
+type ErrorCategory int
+const (
+    ErrorCategoryTransient ErrorCategory = iota
+    ErrorCategoryPermanent
+    // ... additional categories
+)
+
+type ClassifiedError struct {
+    Category ErrorCategory
+    Eligibility RetryEligibility
+    // ... metadata fields
+}
+```
+
+**2. Adaptive Configuration Pattern**
+- Base configuration with operation-specific overrides
+- Per-operation retry policies stored in map[string]*OperationRetryConfig
+- Hot-reloading capability with configuration watchers
+- Environment-aware defaults (development vs production)
+
+**3. Circuit Breaker State Management Pattern**
+```go
+// Three-state pattern with atomic operations
+type CircuitBreakerState int32
+const (
+    StateClosed CircuitBreakerState = iota
+    StateOpen
+    StateHalfOpen
+)
+// Use atomic.LoadInt32/SwapInt32 for thread-safe state transitions
+```
+
+**4. Sliding Window Metrics Pattern**
+- Count-based vs time-based window implementations
+- Interface-driven design for different window strategies
+- Automatic cleanup of expired data
+- Thread-safe bucket rotation for time-based windows
+
+**5. Observability Integration Pattern**
+```go
+// Correlation context for request tracing
+type CorrelationContext struct {
+    CorrelationID string
+    OperationName string
+    StartTime     time.Time
+    Metadata      map[string]string
+}
+```
+
+**6. Middleware Integration Pattern**
+- HTTP RoundTripper wrapper for transparent retry
+- gRPC interceptor chain for unary and streaming calls
+- Priority-based request queuing under load
+- Request hedging for latency-sensitive operations
+
+**7. Transaction Recovery Pattern**
+```go
+// Idempotency and compensation pattern
+type BatchOperation struct {
+    IdempotencyKey     IdempotencyKey
+    CompensationData   map[string]interface{}
+    Checkpoints        []Checkpoint
+    Dependencies       []string
+}
+```
+
+**8. Adaptive Algorithm Pattern**
+```go
+// ML-inspired adaptation with historical data
+type AdaptationState struct {
+    CurrentMultiplier float64
+    SuccessStreak     int
+    FailureStreak     int
+    LastAdaptation    time.Time
+}
+```
+
+**9. Resource Management Pattern**
+- Proper cleanup with Stop() methods and WaitGroups
+- Context cancellation propagation
+- Graceful shutdown sequences
+- Resource leak prevention
+
+**10. Configuration Builder Pattern**
+```go
+// Predefined configuration builders for common scenarios
+func NewWebServiceRetryConfig() *RetryConfig
+func NewDatabaseRetryConfig() *RetryConfig 
+func NewCriticalOperationRetryConfig() *RetryConfig
+```
+
+### Integration Guidelines
+- All error handling components implement proper interfaces
+- Configuration hot-reloading supported throughout
+- Metrics collection enabled by default with opt-out capability
+- Thread-safety guaranteed across all components
+- OpenTelemetry integration for distributed tracing

@@ -111,3 +111,47 @@ This file records architectural and implementation decisions...
 **Decision**: Designed progress tracking system with subscription model and persistence
 **Rationale**: Enables real-time monitoring, supports long-running sync operations, provides user feedback
 **Features**: Channel-based subscriptions, ETA calculations, progress persistence for recovery
+
+[2025-06-13 14:23:38] - ## Major Architecture Decision: Comprehensive Error Handling and Retry System
+
+**Context:** Harbor Replicator needed robust error handling for reliable synchronization between Harbor instances, especially for network failures, rate limiting, and partial batch operation failures.
+
+**Decision:** Implemented a comprehensive 7-component error handling system in `internal/sync/` package:
+
+### Architecture Components:
+1. **Error Classification System** - Comprehensive error categorization with custom error types
+2. **Enhanced Retry Configuration** - Advanced retry logic with jitter and per-operation customization
+3. **Circuit Breaker Implementation** - Three-state circuit breaker with sliding window failure detection
+4. **Partial Failure Recovery Manager** - Transaction logging and compensation for batch operations
+5. **Retry Metrics and Observability** - OpenTelemetry integration and comprehensive monitoring
+6. **Adaptive Retry Strategy Engine** - ML-inspired algorithms for dynamic retry parameter adjustment
+7. **Integration Layer and Middleware** - HTTP/gRPC middleware with automatic retry integration
+
+### Key Technical Decisions:
+- **Modular Design**: Each component as separate file for maintainability
+- **Interface-Based**: ErrorClassifier, TransactionLog, ProgressReporter interfaces for extensibility
+- **Thread-Safe Operations**: All components use proper synchronization primitives
+- **Configuration-Driven**: Extensive YAML configuration support with hot-reloading
+- **Observability-First**: Built-in metrics, tracing, and structured logging
+- **Production-Ready**: Comprehensive error handling, edge case management, resource cleanup
+
+### Performance Considerations:
+- Token bucket rate limiting to prevent system overload
+- Priority-based operation queuing under high load
+- Request hedging for latency-sensitive operations
+- Adaptive retry parameter adjustment based on historical success rates
+
+### Integration Strategy:
+- HTTP RoundTripper wrapper for transparent retry integration
+- gRPC interceptors for both unary and streaming calls
+- Middleware configuration with dependency injection
+- Distributed circuit breaker coordination for multi-instance deployments
+
+**Rationale:** This approach provides enterprise-grade reliability while maintaining flexibility for future enhancements. The modular design allows selective adoption of components based on specific requirements.
+
+**Alternatives Considered:** 
+- Using third-party libraries (rejected due to lack of Harbor-specific error handling)
+- Simple retry-only approach (rejected due to insufficient resilience)
+- Monolithic error handler (rejected due to complexity and maintainability concerns)
+
+**Impact:** Significantly improved system reliability and observability, enabling production deployment with confidence in error recovery capabilities.
