@@ -1,0 +1,146 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+docs/
+prd.md
+prompt.md
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Build artifacts
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+tests/
+testdata/
+coverage.out
+*.test
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vim/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+env.example
+
+# Log files
+logs/
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.cover
+*.prof
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Container-related
+docker-compose.override.yml
+.dockerignore
+
+# State and cache directories
+state/
+cache/
+.cache/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Memory bank (development tool)
+memory-bank/
+
+# Task management
+.taskmaster/
+
+# Kubernetes manifests (not needed in container)
+deployments/
+k8s/
+
+# Monitoring configs (handled separately)
+configs/monitoring/
+
+# Examples and samples
+examples/
+samples/
+
+# License and legal
+LICENSE
+COPYING
+NOTICE
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+Jenkinsfile
+
+# Dependency directories
+vendor/
+
+# Air (development hot reload)
+.air.toml
+build-errors.log

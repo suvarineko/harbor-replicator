@@ -1,1046 +1,1053 @@
 {
-  "tasks": [
-    {
-      "id": 1,
-      "title": "Initialize Go Project Structure",
-      "description": "Set up the Go project with proper module structure, dependencies, and directory layout following Go best practices",
-      "details": "Create project structure:\n```\nharbor-replicator/\n├── cmd/\n│   └── replicator/\n│       └── main.go\n├── internal/\n│   ├── config/\n│   ├── harbor/\n│   ├── sync/\n│   ├── state/\n│   └── monitoring/\n├── pkg/\n│   └── models/\n├── config/\n│   └── replicator.yaml\n├── deployments/\n│   ├── docker/\n│   └── kubernetes/\n├── go.mod\n├── go.sum\n├── Dockerfile\n└── Makefile\n```\nInitialize go module: `go mod init github.com/company/harbor-replicator`\nAdd core dependencies:\n- github.com/goharbor/go-client v0.210.0\n- github.com/spf13/viper\n- go.uber.org/zap\n- github.com/prometheus/client_golang\n- github.com/gin-gonic/gin",
-      "testStrategy": "Verify project builds successfully with `go build ./...`, ensure all directories are created, and dependencies are properly resolved with `go mod tidy`",
-      "priority": "high",
-      "dependencies": [],
-      "status": "done",
-      "subtasks": []
-    },
-    {
-      "id": 2,
-      "title": "Implement Configuration Manager",
-      "description": "Create a configuration management system using Viper to load and validate YAML configurations with support for environment variable substitution",
-      "details": "```go\n// internal/config/config.go\ntype Config struct {\n    Replicator ReplicatorConfig `mapstructure:\"replicator\"`\n    LocalHarbor HarborConfig `mapstructure:\"local_harbor\"`\n    RemoteHarbors []RemoteHarborConfig `mapstructure:\"remote_harbors\"`\n    SyncResources SyncResourcesConfig `mapstructure:\"sync_resources\"`\n    Logging LoggingConfig `mapstructure:\"logging\"`\n    Monitoring MonitoringConfig `mapstructure:\"monitoring\"`\n}\n\nfunc LoadConfig(path string) (*Config, error) {\n    viper.SetConfigFile(path)\n    viper.SetEnvPrefix(\"HARBOR\")\n    viper.AutomaticEnv()\n    \n    if err := viper.ReadInConfig(); err != nil {\n        return nil, err\n    }\n    \n    var config Config\n    if err := viper.Unmarshal(&config); err != nil {\n        return nil, err\n    }\n    \n    return &config, config.Validate()\n}\n\nfunc (c *Config) Validate() error {\n    // Validate URLs, required fields, etc.\n}\n```\nImplement hot-reload capability using viper.WatchConfig() and viper.OnConfigChange()",
-      "testStrategy": "Unit tests for configuration loading with valid/invalid YAML files, environment variable substitution tests, validation tests for missing required fields, and integration tests for configuration hot-reload",
-      "priority": "high",
-      "dependencies": [
-        1
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Configuration Data Structures",
-          "description": "Create comprehensive Go structs for all configuration sections including ReplicatorConfig, HarborConfig, RemoteHarborConfig, SyncResourcesConfig, LoggingConfig, and MonitoringConfig with proper struct tags for Viper mapping",
-          "dependencies": [],
-          "details": "Define structs in internal/config/types.go with mapstructure tags, include fields for URLs, credentials, timeouts, retry policies, resource filters, and monitoring endpoints. Add JSON tags for serialization and validation tags for future use",
-          "status": "done",
-          "testStrategy": "Unit tests to verify struct marshaling/unmarshaling with sample YAML data"
-        },
-        {
-          "id": 2,
-          "title": "Implement Basic Configuration Loading",
-          "description": "Create the core LoadConfig function using Viper to read YAML configuration files and unmarshal into Config struct with environment variable substitution support",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement LoadConfig in internal/config/config.go, set up Viper with SetConfigFile, SetEnvPrefix('HARBOR'), AutomaticEnv(), and SetEnvKeyReplacer for nested env vars. Handle file reading errors and unmarshaling errors with descriptive messages",
-          "status": "done",
-          "testStrategy": "Integration tests with sample YAML files and environment variable overrides"
-        },
-        {
-          "id": 3,
-          "title": "Implement Configuration Validation",
-          "description": "Create comprehensive validation logic for all configuration fields including URL validation, required field checks, credential validation, and logical consistency checks",
-          "dependencies": [
-            1,
-            2
-          ],
-          "details": "Implement Validate() method on Config struct and nested validation methods for each sub-configuration. Validate URLs using net/url package, check for required fields, validate port ranges, timeout values, and ensure remote Harbor configurations have unique names",
-          "status": "done",
-          "testStrategy": "Unit tests with various invalid configurations to ensure proper error messages"
-        },
-        {
-          "id": 4,
-          "title": "Add Configuration Hot-Reload Support",
-          "description": "Implement configuration file watching and hot-reload capability using Viper's WatchConfig and OnConfigChange functions with proper synchronization",
-          "dependencies": [
-            2,
-            3
-          ],
-          "details": "Create WatchConfig method that uses viper.WatchConfig() and registers OnConfigChange callback. Implement thread-safe configuration updates using sync.RWMutex, validate new configuration before applying, and provide hooks for components to react to config changes",
-          "status": "done",
-          "testStrategy": "Integration tests simulating file changes and verifying configuration updates"
-        },
-        {
-          "id": 5,
-          "title": "Create Configuration Manager Service",
-          "description": "Build a ConfigManager service that encapsulates configuration loading, watching, and provides thread-safe access to current configuration with change notifications",
-          "dependencies": [
-            2,
-            3,
-            4
-          ],
-          "details": "Create internal/config/manager.go with ConfigManager struct containing current config, mutex, and change listeners. Implement methods: NewConfigManager, GetConfig, RegisterChangeListener, and internal reload logic. Use channels for change notifications",
-          "status": "done",
-          "testStrategy": "Unit tests for concurrent access and change notification delivery"
-        },
-        {
-          "id": 6,
-          "title": "Implement Environment Variable Substitution",
-          "description": "Enhance configuration loading to support complex environment variable substitution patterns including nested variables and default values",
-          "dependencies": [
-            2
-          ],
-          "details": "Extend Viper configuration to handle patterns like ${VAR_NAME}, ${VAR_NAME:-default}, and nested substitutions. Use viper.SetEnvKeyReplacer to map nested config keys to environment variables with proper delimiters (e.g., HARBOR_LOCAL_HARBOR_URL)",
-          "status": "done",
-          "testStrategy": "Unit tests with various environment variable patterns and edge cases"
-        },
-        {
-          "id": 7,
-          "title": "Add Configuration Export and Import Utilities",
-          "description": "Create utilities to export current configuration (with secrets masked) and import configuration with validation for debugging and migration purposes",
-          "dependencies": [
-            1,
-            3,
-            5
-          ],
-          "details": "Implement ExportConfig method that serializes current config to YAML with sensitive fields masked, and ImportConfig that loads and validates external configuration. Add command-line flags for config operations in cmd package",
-          "status": "done",
-          "testStrategy": "Integration tests for export/import round-trip with secret masking verification"
-        },
-        {
-          "id": 8,
-          "title": "Create Configuration Documentation and Examples",
-          "description": "Generate comprehensive configuration documentation including all available options, environment variable mappings, and example configurations for common scenarios",
-          "dependencies": [
-            1,
-            3,
-            6
-          ],
-          "details": "Create configs/example.yaml with fully documented configuration, generate markdown documentation from struct tags, include examples for single/multi-harbor setups, and document environment variable naming conventions. Add configuration validation CLI command",
-          "status": "done",
-          "testStrategy": "Manual verification that example configurations pass validation"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "title": "Create Harbor Client Wrapper",
-      "description": "Implement a wrapper around the Harbor go-client v0.210.0 with authentication, connection pooling, and error handling",
-      "details": "```go\n// internal/harbor/client.go\ntype HarborClient struct {\n    client *client.Harbor\n    config HarborConfig\n    logger *zap.Logger\n}\n\nfunc NewHarborClient(config HarborConfig, logger *zap.Logger) (*HarborClient, error) {\n    cfg := &client.Config{\n        URL:      config.URL,\n        Username: config.Username,\n        Password: config.Password,\n        Insecure: config.InsecureSkipVerify,\n    }\n    \n    harborClient := client.NewWithConfig(cfg)\n    \n    // Test connection\n    ctx := context.Background()\n    _, err := harborClient.System.GetSystemInfo(ctx, &system.GetSystemInfoParams{})\n    if err != nil {\n        return nil, fmt.Errorf(\"failed to connect to Harbor: %w\", err)\n    }\n    \n    return &HarborClient{\n        client: harborClient,\n        config: config,\n        logger: logger,\n    }, nil\n}\n\n// Implement methods for robot accounts and OIDC groups\nfunc (h *HarborClient) ListSystemRobotAccounts(ctx context.Context) ([]*model.Robot, error) {}\nfunc (h *HarborClient) ListProjectRobotAccounts(ctx context.Context, projectName string) ([]*model.Robot, error) {}\nfunc (h *HarborClient) ListOIDCGroups(ctx context.Context) ([]*model.UserGroup, error) {}\n```",
-      "testStrategy": "Mock Harbor API responses using httptest, test authentication failures, connection timeouts, and API error handling. Integration tests against a test Harbor instance",
-      "priority": "high",
-      "dependencies": [
-        1,
-        2
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Harbor Client Configuration Structure",
-          "description": "Create a comprehensive configuration structure for the Harbor client that includes connection settings, authentication details, retry policies, rate limiting, and circuit breaker configurations",
-          "dependencies": [],
-          "details": "Define HarborConfig struct with fields for URL, username, password, TLS settings, timeout values, retry attempts, rate limit settings (requests per second), circuit breaker thresholds, and connection pool size. Include validation methods to ensure configuration values are within acceptable ranges",
-          "status": "done",
-          "testStrategy": "Write unit tests to validate configuration parsing and validation logic, including edge cases for invalid values"
-        },
-        {
-          "id": 2,
-          "title": "Implement HTTP Transport with Connection Pooling",
-          "description": "Create a custom HTTP transport layer that implements connection pooling, timeout handling, and TLS configuration for the Harbor client",
-          "dependencies": [
-            1
-          ],
-          "details": "Configure http.Transport with MaxIdleConns, MaxIdleConnsPerHost, IdleConnTimeout, and TLS settings based on the configuration. Implement a transport wrapper that can be injected into the Harbor go-client for better control over HTTP connections",
-          "status": "done",
-          "testStrategy": "Test connection pooling behavior by simulating multiple concurrent requests and verifying connection reuse metrics"
-        },
-        {
-          "id": 3,
-          "title": "Implement Rate Limiter Middleware",
-          "description": "Create a rate limiting middleware that controls the number of requests per second to the Harbor API to prevent overwhelming the server",
-          "dependencies": [
-            1,
-            2
-          ],
-          "details": "Use golang.org/x/time/rate package to implement a token bucket rate limiter. Create a middleware that wraps HTTP requests and blocks when rate limit is exceeded. Make the rate configurable through HarborConfig",
-          "status": "done",
-          "testStrategy": "Write tests that verify rate limiting by sending bursts of requests and measuring actual throughput against configured limits"
-        },
-        {
-          "id": 4,
-          "title": "Implement Circuit Breaker Pattern",
-          "description": "Add circuit breaker functionality to prevent cascading failures when Harbor API is experiencing issues",
-          "dependencies": [
-            1,
-            2
-          ],
-          "details": "Use github.com/sony/gobreaker or implement a custom circuit breaker that tracks failure rates and opens the circuit when threshold is exceeded. Configure thresholds for failure rate, consecutive failures, and timeout duration. Integrate with the HTTP transport layer",
-          "status": "done",
-          "testStrategy": "Test circuit breaker states (closed, open, half-open) by simulating API failures and verifying appropriate state transitions"
-        },
-        {
-          "id": 5,
-          "title": "Create Error Handling and Retry Logic",
-          "description": "Implement comprehensive error handling with categorization of errors (transient vs permanent) and exponential backoff retry logic for transient failures",
-          "dependencies": [
-            3,
-            4
-          ],
-          "details": "Create error wrapper types that categorize Harbor API errors. Implement retry logic with exponential backoff for transient errors (network issues, 5xx errors). Skip retries for permanent errors (4xx errors). Include jitter in backoff calculation to prevent thundering herd",
-          "status": "done",
-          "testStrategy": "Test retry behavior with mock responses simulating various error scenarios and verify backoff timing"
-        },
-        {
-          "id": 6,
-          "title": "Implement Core Harbor Client Wrapper",
-          "description": "Create the main HarborClient struct that wraps the Harbor go-client and integrates all middleware components",
-          "dependencies": [
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
-          "details": "Implement NewHarborClient constructor that initializes the go-client with custom transport, applies rate limiting and circuit breaker middleware. Add connection validation logic that tests Harbor connectivity during initialization. Include structured logging with zap for all operations",
-          "status": "done",
-          "testStrategy": "Integration tests that verify client initialization with various configurations and connection scenarios"
-        },
-        {
-          "id": 7,
-          "title": "Implement Robot Account Operations",
-          "description": "Add methods for listing and managing system-level and project-level robot accounts with proper error handling and logging",
-          "dependencies": [
-            6
-          ],
-          "details": "Implement ListSystemRobotAccounts and ListProjectRobotAccounts methods with pagination support. Handle API responses, transform to internal models, and apply retry logic. Include detailed logging of operations and errors. Support filtering and sorting options",
-          "status": "done",
-          "testStrategy": "Mock Harbor API responses to test robot account listing with various scenarios including empty results, pagination, and errors"
-        },
-        {
-          "id": 8,
-          "title": "Implement OIDC Group Operations",
-          "description": "Add methods for listing and managing OIDC groups with proper error handling and pagination support",
-          "dependencies": [
-            6
-          ],
-          "details": "Implement ListOIDCGroups method with support for filtering by group type. Handle pagination for large result sets. Transform API responses to internal UserGroup models. Include proper error handling for OIDC-specific errors",
-          "status": "done",
-          "testStrategy": "Test OIDC group operations with mocked responses covering various group configurations and error scenarios"
-        },
-        {
-          "id": 9,
-          "title": "Add Metrics and Observability",
-          "description": "Implement metrics collection for monitoring client performance, API call rates, error rates, and circuit breaker states",
-          "dependencies": [
-            6,
-            7,
-            8
-          ],
-          "details": "Use Prometheus client library to expose metrics for request count, request duration, error rates by type, circuit breaker state changes, and connection pool statistics. Create middleware to automatically collect metrics for all API calls",
-          "status": "done",
-          "testStrategy": "Verify metrics are correctly incremented during various operations and error scenarios"
-        },
-        {
-          "id": 10,
-          "title": "Create Client Health Check and Diagnostics",
-          "description": "Implement health check endpoints and diagnostic methods to monitor Harbor client status and connectivity",
-          "dependencies": [
-            6,
-            7,
-            8,
-            9
-          ],
-          "details": "Add HealthCheck method that verifies Harbor connectivity and returns detailed status including circuit breaker state, rate limiter status, and recent error statistics. Implement GetDiagnostics method that returns comprehensive client state information for debugging",
-          "status": "done",
-          "testStrategy": "Test health check behavior under various client states and verify diagnostic information accuracy"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "Implement State Manager",
-      "description": "Create a state management system to track synchronization progress and maintain resource mappings between Harbor instances",
-      "details": "```go\n// internal/state/manager.go\ntype StateManager struct {\n    mu sync.RWMutex\n    state *SyncState\n    filePath string\n    logger *zap.Logger\n}\n\ntype SyncState struct {\n    LastSync map[string]time.Time `json:\"last_sync\"`\n    ResourceMappings map[string]ResourceMapping `json:\"resource_mappings\"`\n    SyncErrors []SyncError `json:\"sync_errors\"`\n}\n\nfunc NewStateManager(filePath string, logger *zap.Logger) (*StateManager, error) {\n    sm := &StateManager{\n        filePath: filePath,\n        logger: logger,\n    }\n    \n    if err := sm.Load(); err != nil {\n        if !os.IsNotExist(err) {\n            return nil, err\n        }\n        sm.state = &SyncState{\n            LastSync: make(map[string]time.Time),\n            ResourceMappings: make(map[string]ResourceMapping),\n        }\n    }\n    \n    return sm, nil\n}\n\nfunc (sm *StateManager) Save() error {\n    sm.mu.RLock()\n    defer sm.mu.RUnlock()\n    \n    data, err := json.MarshalIndent(sm.state, \"\", \"  \")\n    if err != nil {\n        return err\n    }\n    \n    return os.WriteFile(sm.filePath, data, 0644)\n}\n```",
-      "testStrategy": "Unit tests for state persistence and recovery, concurrent access tests, corruption recovery tests, and performance tests with large state files",
-      "priority": "medium",
-      "dependencies": [
-        1
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Core State Data Structures",
-          "description": "Create the complete data structures for StateManager including ResourceMapping, SyncError, and extend SyncState with additional fields for tracking sync operations",
-          "dependencies": [],
-          "details": "Define ResourceMapping struct with fields like SourceID, TargetID, ResourceType, and LastModified. Define SyncError struct with Timestamp, ResourceType, ResourceID, Error message, and Retry count. Extend SyncState to include SyncInProgress flag, CurrentSyncID, and ResourceVersions map for tracking resource versions",
-          "status": "done",
-          "testStrategy": "Unit tests to verify struct initialization, JSON marshaling/unmarshaling, and field validation"
-        },
-        {
-          "id": 2,
-          "title": "Implement State Persistence Methods",
-          "description": "Implement Load() and Save() methods with atomic file operations, backup creation, and error recovery mechanisms",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement Load() to read state from disk with JSON unmarshaling and validation. Enhance Save() with atomic write using temporary file and rename, create backup before save, implement file locking to prevent concurrent writes, and add compression support for large state files",
-          "status": "done",
-          "testStrategy": "Test file operations with mock filesystem, verify atomic writes, test corruption recovery, and concurrent access scenarios"
-        },
-        {
-          "id": 3,
-          "title": "Create Resource Mapping Management Methods",
-          "description": "Implement methods to add, update, retrieve, and delete resource mappings between source and target Harbor instances",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement AddMapping(), UpdateMapping(), GetMapping(), DeleteMapping(), and GetMappingsByType() methods. Include validation for duplicate mappings, orphaned mappings cleanup, and mapping conflict resolution. Add methods for bulk operations and mapping queries",
-          "status": "done",
-          "testStrategy": "Test CRUD operations, concurrent access with mutex verification, mapping validation rules, and query performance"
-        },
-        {
-          "id": 4,
-          "title": "Implement Sync Progress Tracking",
-          "description": "Create methods to track and update synchronization progress including start, update, and completion of sync operations",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement StartSync(), UpdateSyncProgress(), CompleteSyncForResource(), and FailSyncForResource() methods. Add progress percentage calculation, estimated time remaining, resource-level progress tracking, and sync history maintenance with configurable retention",
-          "status": "done",
-          "testStrategy": "Test state transitions, progress calculations, concurrent sync tracking, and history retention policies"
-        },
-        {
-          "id": 5,
-          "title": "Add Error Handling and Recovery Methods",
-          "description": "Implement comprehensive error tracking, retry logic, and state recovery mechanisms for failed synchronizations",
-          "dependencies": [
-            1,
-            4
-          ],
-          "details": "Implement RecordError(), GetErrors(), ClearErrors(), and GetErrorsByResource() methods. Add exponential backoff retry logic, error categorization (transient vs permanent), automatic error cleanup based on age, and methods to analyze error patterns for alerting",
-          "status": "done",
-          "testStrategy": "Test error recording and retrieval, retry logic with various failure scenarios, error cleanup, and pattern detection algorithms"
-        },
-        {
-          "id": 6,
-          "title": "Create State Query and Reporting Methods",
-          "description": "Implement methods to query state information and generate synchronization reports for monitoring and debugging",
-          "dependencies": [
-            3,
-            4,
-            5
-          ],
-          "details": "Implement GetSyncStatus(), GetLastSyncTime(), GetPendingResources(), GenerateSyncReport(), and GetResourceHistory() methods. Add filtering and pagination support, export functionality for different formats (JSON, CSV), metrics calculation (sync rate, error rate), and state validation/consistency checks",
-          "status": "done",
-          "testStrategy": "Test query performance with large datasets, verify report accuracy, test export formats, and validate metric calculations"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "Build Robot Account Synchronization",
-      "description": "Implement synchronization logic for both system-wide and project-specific robot accounts with conflict resolution",
-      "details": "```go\n// internal/sync/robot_accounts.go\ntype RobotAccountSynchronizer struct {\n    localClient *harbor.HarborClient\n    remoteClients map[string]*harbor.HarborClient\n    stateManager *state.StateManager\n    logger *zap.Logger\n}\n\nfunc (s *RobotAccountSynchronizer) SyncSystemRobots(ctx context.Context, source string) error {\n    remoteRobots, err := s.remoteClients[source].ListSystemRobotAccounts(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list remote robots: %w\", err)\n    }\n    \n    localRobots, err := s.localClient.ListSystemRobotAccounts(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list local robots: %w\", err)\n    }\n    \n    // Create name-based index\n    localIndex := make(map[string]*model.Robot)\n    for _, robot := range localRobots {\n        localIndex[robot.Name] = robot\n    }\n    \n    for _, remoteRobot := range remoteRobots {\n        if localRobot, exists := localIndex[remoteRobot.Name]; exists {\n            // Update if different\n            if !s.robotsEqual(remoteRobot, localRobot) {\n                if err := s.updateRobot(ctx, remoteRobot); err != nil {\n                    s.logger.Error(\"failed to update robot\", zap.Error(err))\n                }\n            }\n        } else {\n            // Create new\n            if err := s.createRobot(ctx, remoteRobot); err != nil {\n                s.logger.Error(\"failed to create robot\", zap.Error(err))\n            }\n        }\n    }\n    \n    return nil\n}\n```",
-      "testStrategy": "Test robot creation, updates, and conflict resolution. Mock scenarios with matching names but different permissions. Test error handling for partial failures",
-      "priority": "high",
-      "dependencies": [
-        3,
-        4
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Robot Account Models and Interfaces",
-          "description": "Create comprehensive data models for robot accounts including system-wide and project-specific types, along with interfaces for synchronization operations",
-          "dependencies": [],
-          "details": "Define Robot struct with fields for ID, Name, Description, Type (system/project), ProjectID, Permissions, Secret, CreationTime, ExpirationTime, and Disabled status. Create RobotSynchronizer interface with methods for listing, creating, updating, and deleting robots. Include RobotFilter struct for pattern-based filtering with name patterns, project patterns, and type filters.",
-          "status": "done",
-          "testStrategy": "Unit tests to validate model serialization/deserialization and interface compliance"
-        },
-        {
-          "id": 2,
-          "title": "Implement Secure Token and Secret Management",
-          "description": "Build secure handling for robot account tokens and secrets including encryption, storage, and retrieval mechanisms",
-          "dependencies": [
-            1
-          ],
-          "details": "Create SecretManager component that encrypts robot secrets before storage using AES-256, stores encrypted secrets in state manager with metadata, provides secure retrieval with decryption, and implements secret rotation capabilities. Include methods for generating new secrets, validating existing ones, and securely comparing secrets without exposing them in logs.",
-          "status": "done",
-          "testStrategy": "Security-focused tests including encryption/decryption validation, secret comparison without exposure, and rotation scenarios"
-        },
-        {
-          "id": 3,
-          "title": "Build Robot Account Comparison and Conflict Detection",
-          "description": "Implement logic to compare robot accounts between instances and detect conflicts based on names and permissions",
-          "dependencies": [
-            1
-          ],
-          "details": "Create robotsEqual method that compares all relevant fields except secrets and timestamps. Implement conflict detection that identifies robots with same name but different permissions, same name in different projects, or overlapping permission scopes. Build RobotConflict struct to capture conflict details including conflicting robots, conflict type, and suggested resolution.",
-          "status": "done",
-          "testStrategy": "Unit tests with various robot configurations to validate comparison logic and conflict detection accuracy"
-        },
-        {
-          "id": 4,
-          "title": "Implement System-Wide Robot Account Synchronization",
-          "description": "Complete the system-wide robot account synchronization logic with proper error handling and state tracking",
-          "dependencies": [
-            1,
-            2,
-            3
-          ],
-          "details": "Enhance the existing SyncSystemRobots method to handle robot creation with secure secret management, update existing robots while preserving secrets unless explicitly changed, track synchronization state for each robot, and implement batch operations for efficiency. Add support for dry-run mode to preview changes before applying them.",
-          "status": "done",
-          "testStrategy": "Integration tests simulating various sync scenarios including creates, updates, and conflict resolution"
-        },
-        {
-          "id": 5,
-          "title": "Implement Project-Specific Robot Account Synchronization",
-          "description": "Build synchronization logic for project-specific robot accounts with project context awareness",
-          "dependencies": [
-            1,
-            2,
-            3
-          ],
-          "details": "Create SyncProjectRobots method that synchronizes robots within specific project contexts, handles project ID mapping between instances, ensures project exists before creating project robots, and maintains project-robot associations. Include logic to handle robots that reference non-existent projects and options to create missing projects or skip those robots.",
-          "status": "done",
-          "testStrategy": "Integration tests with multiple projects and various robot-project associations"
-        },
-        {
-          "id": 6,
-          "title": "Build Filtering and Selection Logic",
-          "description": "Implement pattern-based filtering for selective robot account synchronization",
-          "dependencies": [
-            1
-          ],
-          "details": "Create RobotFilter implementation supporting glob patterns for robot names, regex patterns for advanced matching, project-based filtering, permission-based filtering, and exclusion patterns. Build ApplyFilter method that processes robot lists through configured filters and returns filtered results with filter match details.",
-          "status": "done",
-          "testStrategy": "Unit tests with various filter patterns and robot configurations to ensure accurate filtering"
-        },
-        {
-          "id": 7,
-          "title": "Implement Conflict Resolution Strategies",
-          "description": "Build configurable conflict resolution strategies for handling robot account conflicts during synchronization",
-          "dependencies": [
-            3,
-            4,
-            5
-          ],
-          "details": "Create ConflictResolver with strategies including 'source-wins' (remote robot takes precedence), 'target-wins' (local robot preserved), 'merge-permissions' (combine permission sets), 'rename-duplicate' (append suffix to conflicting names), and 'interactive' (prompt for user decision). Implement strategy selection based on configuration and conflict type.",
-          "status": "done",
-          "testStrategy": "Unit tests for each resolution strategy with various conflict scenarios"
-        },
-        {
-          "id": 8,
-          "title": "Add Monitoring and Reporting for Robot Synchronization",
-          "description": "Implement comprehensive monitoring, logging, and reporting for robot account synchronization operations",
-          "dependencies": [
-            4,
-            5,
-            6,
-            7
-          ],
-          "details": "Create RobotSyncReport struct capturing robots created/updated/skipped, conflicts encountered and resolutions, secrets rotated, and errors encountered. Implement detailed logging with structured fields for robot names, projects, and operations. Add metrics collection for sync duration, robot counts by type, and conflict resolution outcomes. Build report generation in multiple formats (JSON, table, summary).",
-          "status": "done",
-          "testStrategy": "Integration tests validating report accuracy and completeness across various sync scenarios"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "title": "Build OIDC Group Synchronization",
-      "description": "Implement synchronization for OIDC member groups including their roles, permissions, and project associations",
-      "details": "```go\n// internal/sync/oidc_groups.go\ntype OIDCGroupSynchronizer struct {\n    localClient *harbor.HarborClient\n    remoteClients map[string]*harbor.HarborClient\n    stateManager *state.StateManager\n    logger *zap.Logger\n}\n\nfunc (s *OIDCGroupSynchronizer) SyncGroups(ctx context.Context, source string) error {\n    remoteGroups, err := s.remoteClients[source].ListOIDCGroups(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list remote groups: %w\", err)\n    }\n    \n    for _, group := range remoteGroups {\n        // Get group's project associations\n        projects, err := s.remoteClients[source].GetGroupProjects(ctx, group.ID)\n        if err != nil {\n            s.logger.Error(\"failed to get group projects\", zap.Error(err))\n            continue\n        }\n        \n        // Find or create local group\n        localGroup, err := s.findOrCreateGroup(ctx, group)\n        if err != nil {\n            s.logger.Error(\"failed to sync group\", zap.Error(err))\n            continue\n        }\n        \n        // Sync project associations\n        for _, project := range projects {\n            if err := s.syncGroupProjectAssociation(ctx, localGroup, project); err != nil {\n                s.logger.Error(\"failed to sync project association\", zap.Error(err))\n            }\n        }\n    }\n    \n    return nil\n}\n```",
-      "testStrategy": "Test group creation with project associations, permission preservation, and name-based matching. Verify group-to-project mappings are maintained correctly",
-      "priority": "high",
-      "dependencies": [
-        3,
-        4
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define OIDC Group Data Models and Interfaces",
-          "description": "Create comprehensive data structures for OIDC groups including group metadata, role definitions, permission sets, and project associations",
-          "dependencies": [],
-          "details": "Define structs for OIDCGroup, GroupRole, GroupPermission, GroupProjectAssociation in internal/models/. Include fields for group_name, group_type, ldap_group_dn, id_token_claim, and permission hierarchy levels. Create interfaces for group operations in internal/harbor/client.go",
-          "status": "done",
-          "testStrategy": "Unit tests to validate struct marshaling/unmarshaling and interface compliance"
-        },
-        {
-          "id": 2,
-          "title": "Implement Harbor API Client Methods for OIDC Groups",
-          "description": "Add methods to HarborClient for listing, creating, updating, and deleting OIDC groups, including methods for managing group-project associations",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement ListOIDCGroups, GetOIDCGroup, CreateOIDCGroup, UpdateOIDCGroup, DeleteOIDCGroup, GetGroupProjects, AddGroupToProject, RemoveGroupFromProject methods. Use Harbor's /usergroups and /projects/{project_id}/members APIs",
-          "status": "done",
-          "testStrategy": "Integration tests with mock Harbor API responses, validate API request/response handling"
-        },
-        {
-          "id": 3,
-          "title": "Create Group State Management Layer",
-          "description": "Implement state tracking for OIDC groups to maintain synchronization status, track changes, and handle group lifecycle",
-          "dependencies": [
-            1
-          ],
-          "details": "Extend StateManager to track group states including last_sync_time, sync_status, and group_checksum. Implement methods for SaveGroupState, GetGroupState, and CompareGroupStates. Store group-project mappings and permission hierarchies",
-          "status": "done",
-          "testStrategy": "Unit tests for state persistence and retrieval, test state comparison logic"
-        },
-        {
-          "id": 4,
-          "title": "Build Group Matching and Resolution Logic",
-          "description": "Implement logic to match groups across Harbor instances using name-based references and handle group identity resolution",
-          "dependencies": [
-            2,
-            3
-          ],
-          "details": "Create findOrCreateGroup method that matches groups by group_name and group_type. Implement logic to handle LDAP DN normalization and OIDC claim matching. Build group comparison logic that considers permission hierarchies",
-          "status": "done",
-          "testStrategy": "Unit tests with various group matching scenarios, test edge cases like name conflicts"
-        },
-        {
-          "id": 5,
-          "title": "Implement Permission Hierarchy Synchronization",
-          "description": "Build logic to synchronize group permissions while maintaining role hierarchies and inheritance rules",
-          "dependencies": [
-            4
-          ],
-          "details": "Create methods to analyze and replicate permission hierarchies. Implement role mapping between source and target (Admin, Developer, Guest, etc.). Handle permission inheritance and override scenarios. Ensure atomic permission updates",
-          "status": "done",
-          "testStrategy": "Integration tests validating permission hierarchy preservation, test role mapping accuracy"
-        },
-        {
-          "id": 6,
-          "title": "Create Project Association Synchronization",
-          "description": "Implement synchronization of group-project associations including role assignments within each project",
-          "dependencies": [
-            4,
-            5
-          ],
-          "details": "Build syncGroupProjectAssociation method that maps project names between instances, creates missing project associations, updates roles within projects, and removes obsolete associations. Handle project name resolution and validation",
-          "status": "done",
-          "testStrategy": "Integration tests for project association CRUD operations, validate role consistency"
-        },
-        {
-          "id": 7,
-          "title": "Add Conflict Resolution and Error Handling",
-          "description": "Implement comprehensive error handling and conflict resolution strategies for group synchronization scenarios",
-          "dependencies": [
-            4,
-            5,
-            6
-          ],
-          "details": "Handle scenarios like duplicate group names, conflicting permissions, missing projects, and API failures. Implement retry logic with exponential backoff. Add detailed logging for troubleshooting. Create rollback mechanisms for failed syncs",
-          "status": "done",
-          "testStrategy": "Test error scenarios including API failures, permission conflicts, and partial sync failures"
-        },
-        {
-          "id": 8,
-          "title": "Implement Batch Processing and Performance Optimization",
-          "description": "Optimize group synchronization for large-scale deployments with hundreds of groups and complex permission structures",
-          "dependencies": [
-            6,
-            7
-          ],
-          "details": "Implement batch API calls for group operations, add concurrent processing with proper synchronization, implement caching for frequently accessed group data, and add progress tracking. Include rate limiting to avoid overwhelming Harbor API",
-          "status": "done",
-          "testStrategy": "Performance tests with large datasets, measure sync times and API call efficiency"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Create Synchronization Engine",
-      "description": "Build the core synchronization orchestrator that manages sync cycles, coordinates resource synchronizers, and handles scheduling",
-      "details": "```go\n// internal/sync/engine.go\ntype SyncEngine struct {\n    config *config.Config\n    robotSync *RobotAccountSynchronizer\n    oidcSync *OIDCGroupSynchronizer\n    stateManager *state.StateManager\n    logger *zap.Logger\n    ticker *time.Ticker\n    done chan bool\n}\n\nfunc (e *SyncEngine) Start(ctx context.Context) error {\n    e.ticker = time.NewTicker(time.Duration(e.config.Replicator.SyncInterval) * time.Second)\n    e.done = make(chan bool)\n    \n    // Initial sync\n    e.runSyncCycle(ctx)\n    \n    go func() {\n        for {\n            select {\n            case <-e.ticker.C:\n                e.runSyncCycle(ctx)\n            case <-e.done:\n                return\n            case <-ctx.Done():\n                return\n            }\n        }\n    }()\n    \n    return nil\n}\n\nfunc (e *SyncEngine) runSyncCycle(ctx context.Context) {\n    e.logger.Info(\"starting sync cycle\")\n    start := time.Now()\n    \n    var wg sync.WaitGroup\n    for _, remote := range e.config.RemoteHarbors {\n        if !remote.Enabled {\n            continue\n        }\n        \n        wg.Add(1)\n        go func(source string) {\n            defer wg.Done()\n            \n            if e.config.SyncResources.SystemRobotAccounts.Enabled {\n                if err := e.robotSync.SyncSystemRobots(ctx, source); err != nil {\n                    e.logger.Error(\"failed to sync system robots\", zap.Error(err))\n                }\n            }\n            \n            if e.config.SyncResources.OIDCGroups.Enabled {\n                if err := e.oidcSync.SyncGroups(ctx, source); err != nil {\n                    e.logger.Error(\"failed to sync OIDC groups\", zap.Error(err))\n                }\n            }\n        }(remote.Name)\n    }\n    \n    wg.Wait()\n    e.logger.Info(\"sync cycle completed\", zap.Duration(\"duration\", time.Since(start)))\n}\n```",
-      "testStrategy": "Test concurrent synchronization from multiple sources, verify scheduling accuracy, test graceful shutdown, and measure sync cycle performance",
-      "priority": "high",
-      "dependencies": [
-        4,
-        5,
-        6
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Core Engine Interfaces and Types",
-          "description": "Create the foundational interfaces and types for the synchronization engine including SyncEngine struct, Synchronizer interface, and sync result types",
-          "dependencies": [],
-          "details": "Define interfaces for resource synchronizers (Synchronizer interface with Sync method), create SyncResult struct to capture sync outcomes (success count, error count, duration), define SyncContext to pass sync-specific data, and create enums for sync status states",
-          "status": "done",
-          "testStrategy": "Unit tests to verify interface implementations and type behaviors"
-        },
-        {
-          "id": 2,
-          "title": "Implement Worker Pool for Concurrent Operations",
-          "description": "Build a configurable worker pool to handle concurrent synchronization operations across multiple remote Harbor instances",
-          "dependencies": [
-            1
-          ],
-          "details": "Create WorkerPool struct with configurable size, implement job queue using channels, add rate limiting per remote instance, include context cancellation support, and implement graceful shutdown mechanism",
-          "status": "done",
-          "testStrategy": "Test concurrent job execution, verify rate limiting, and test graceful shutdown scenarios"
-        },
-        {
-          "id": 3,
-          "title": "Create Sync Scheduler Component",
-          "description": "Implement the scheduling mechanism that triggers sync cycles based on configured intervals and handles dynamic schedule updates",
-          "dependencies": [
-            1
-          ],
-          "details": "Build Scheduler struct with ticker management, support for immediate sync triggers, implement schedule update without restart, add jitter to prevent thundering herd, and include next run time calculation",
-          "status": "done",
-          "testStrategy": "Test scheduled executions, verify interval changes, and test immediate trigger functionality"
-        },
-        {
-          "id": 4,
-          "title": "Build Sync Orchestrator Logic",
-          "description": "Implement the core orchestration logic that coordinates different resource synchronizers and manages sync cycles",
-          "dependencies": [
-            1,
-            2,
-            3
-          ],
-          "details": "Create runSyncCycle method with proper error handling, implement parallel sync for multiple remotes using worker pool, add sync cycle ID generation for tracking, implement pre and post sync hooks, and add circuit breaker pattern for failing remotes",
-          "status": "done",
-          "testStrategy": "Test orchestration flow, verify parallel execution, and test error scenarios"
-        },
-        {
-          "id": 5,
-          "title": "Implement Sync Progress Tracking",
-          "description": "Add real-time progress tracking and reporting capabilities for ongoing synchronization operations",
-          "dependencies": [
-            4
-          ],
-          "details": "Create SyncProgress struct with current state tracking, implement progress updates via channels, add ETA calculation based on historical data, create progress aggregation for multiple resources, and implement progress persistence for recovery",
-          "status": "done",
-          "testStrategy": "Test progress updates during sync, verify ETA calculations, and test recovery scenarios"
-        },
-        {
-          "id": 6,
-          "title": "Add Metrics and Monitoring Integration",
-          "description": "Integrate comprehensive metrics collection and monitoring capabilities into the sync engine",
-          "dependencies": [
-            4,
-            5
-          ],
-          "details": "Add Prometheus metrics for sync duration, success/failure counts, and queue depth, implement health check endpoint, create custom metrics for each resource type, add alerting thresholds configuration, and include sync lag measurement",
-          "status": "done",
-          "testStrategy": "Verify metrics are correctly exposed, test threshold alerts, and validate metric accuracy"
-        },
-        {
-          "id": 7,
-          "title": "Implement Engine Lifecycle Management",
-          "description": "Build complete lifecycle management including initialization, startup, shutdown, and error recovery mechanisms",
-          "dependencies": [
-            2,
-            3,
-            4
-          ],
-          "details": "Implement Start method with dependency validation, create Stop method with graceful shutdown, add Restart capability without data loss, implement health checks for dependencies, and add automatic recovery from transient failures",
-          "status": "done",
-          "testStrategy": "Test startup/shutdown sequences, verify graceful handling of in-flight operations, and test recovery mechanisms"
-        },
-        {
-          "id": 8,
-          "title": "Create Engine Configuration and Validation",
-          "description": "Implement comprehensive configuration management and validation for the sync engine with hot-reload support",
-          "dependencies": [
-            7
-          ],
-          "details": "Build configuration validation for sync intervals and worker counts, implement configuration hot-reload without restart, add configuration versioning support, create sensible defaults with override capability, and implement configuration change notifications",
-          "status": "done",
-          "testStrategy": "Test configuration validation rules, verify hot-reload functionality, and test invalid configuration handling"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "title": "Implement Monitoring and Metrics",
-      "description": "Set up Prometheus metrics collection and expose metrics endpoint for monitoring synchronization operations",
-      "details": "```go\n// internal/monitoring/metrics.go\nvar (\n    syncTotal = prometheus.NewCounterVec(\n        prometheus.CounterOpts{\n            Name: \"harbor_replicator_sync_total\",\n            Help: \"Total number of synchronization cycles\",\n        },\n        []string{\"status\"},\n    )\n    \n    resourcesSynced = prometheus.NewCounterVec(\n        prometheus.CounterOpts{\n            Name: \"harbor_replicator_resources_synced\",\n            Help: \"Total resources synchronized\",\n        },\n        []string{\"type\", \"source\", \"operation\"},\n    )\n    \n    syncDuration = prometheus.NewHistogramVec(\n        prometheus.HistogramOpts{\n            Name: \"harbor_replicator_sync_duration_seconds\",\n            Help: \"Duration of sync operations\",\n            Buckets: prometheus.DefBuckets,\n        },\n        []string{\"source\", \"resource_type\"},\n    )\n)\n\nfunc init() {\n    prometheus.MustRegister(syncTotal, resourcesSynced, syncDuration)\n}\n\nfunc SetupMetricsServer(port int) *http.Server {\n    mux := http.NewServeMux()\n    mux.Handle(\"/metrics\", promhttp.Handler())\n    \n    server := &http.Server{\n        Addr: fmt.Sprintf(\":%d\", port),\n        Handler: mux,\n    }\n    \n    go func() {\n        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {\n            log.Fatalf(\"metrics server failed: %v\", err)\n        }\n    }()\n    \n    return server\n}\n```",
-      "testStrategy": "Verify all metrics are properly registered and incremented, test metric labels are correct, ensure metrics endpoint returns valid Prometheus format",
-      "priority": "medium",
-      "dependencies": [
-        1,
-        7
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Core Metrics Structure",
-          "description": "Create comprehensive metrics definitions for all synchronization operations including counters, gauges, and histograms",
-          "dependencies": [],
-          "details": "Extend the existing metrics.go to include additional metrics: sync errors counter with error type labels, active sync operations gauge, resource queue size gauge, API call latency histogram, and last successful sync timestamp gauge. Define proper metric naming conventions following Prometheus best practices with harbor_replicator_ prefix.",
-          "status": "done",
-          "testStrategy": "Unit test metric registration and ensure all metrics can be incremented/observed without panics"
-        },
-        {
-          "id": 2,
-          "title": "Implement Metrics Collection Interface",
-          "description": "Create a metrics collector interface that can be injected into sync operations to track metrics",
-          "dependencies": [
-            1
-          ],
-          "details": "Design MetricsCollector interface with methods like RecordSyncStart(), RecordSyncComplete(), RecordResourceSynced(), RecordError(). Implement PrometheusCollector that updates the defined Prometheus metrics. Include context propagation for tracking operation metadata.",
-          "status": "done",
-          "testStrategy": "Mock the interface in tests and verify correct metric updates for various scenarios"
-        },
-        {
-          "id": 3,
-          "title": "Integrate Metrics into Sync Operations",
-          "description": "Instrument all synchronization operations with metrics collection calls",
-          "dependencies": [
-            2
-          ],
-          "details": "Modify sync package to accept MetricsCollector, add timing measurements around sync operations, track resource counts by type and operation (create/update/delete), record errors with proper labels, and update queue size metrics. Ensure metrics are collected at appropriate granularity without impacting performance.",
-          "status": "done",
-          "testStrategy": "Integration tests verifying metrics are updated correctly during sync operations"
-        },
-        {
-          "id": 4,
-          "title": "Create Custom Metrics Registry",
-          "description": "Implement a custom registry for application-specific metrics and health indicators",
-          "dependencies": [
-            1
-          ],
-          "details": "Build a registry that tracks Harbor instance health, replication lag metrics, configuration drift detection, and resource quota usage. Include methods to expose these as Prometheus metrics and provide a summary endpoint for quick health checks.",
-          "status": "done",
-          "testStrategy": "Test registry updates under concurrent access and verify metric accuracy"
-        },
-        {
-          "id": 5,
-          "title": "Setup HTTP Metrics Server",
-          "description": "Implement the HTTP server to expose Prometheus metrics endpoint with proper security and configuration",
-          "dependencies": [
-            3,
-            4
-          ],
-          "details": "Enhance SetupMetricsServer to include graceful shutdown, configurable bind address, optional TLS support, basic authentication if needed, and health/readiness endpoints. Add middleware for request logging and panic recovery. Ensure server lifecycle is properly managed.",
-          "status": "done",
-          "testStrategy": "Test server startup/shutdown, verify metrics endpoint accessibility, and load test the endpoint"
-        },
-        {
-          "id": 6,
-          "title": "Add Metrics Dashboard Configuration",
-          "description": "Create Grafana dashboard configuration and alerting rules for the exposed metrics",
-          "dependencies": [
-            5
-          ],
-          "details": "Generate Grafana dashboard JSON with panels for sync success rate, resource synchronization trends, error rates by type, performance metrics, and queue depths. Include Prometheus alerting rules for sync failures, high error rates, and performance degradation. Document metric meanings and thresholds.",
-          "status": "done",
-          "testStrategy": "Import dashboard into test Grafana instance and verify all panels display correctly with sample data"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "title": "Implement Health and Readiness Endpoints",
-      "description": "Create HTTP endpoints for health checks and readiness probes compatible with Kubernetes deployments",
-      "details": "```go\n// internal/monitoring/health.go\ntype HealthServer struct {\n    engine *sync.SyncEngine\n    stateManager *state.StateManager\n    startTime time.Time\n    logger *zap.Logger\n}\n\nfunc (h *HealthServer) SetupRoutes() *gin.Engine {\n    router := gin.New()\n    router.Use(gin.Recovery())\n    \n    router.GET(\"/health\", h.healthHandler)\n    router.GET(\"/ready\", h.readyHandler)\n    \n    return router\n}\n\nfunc (h *HealthServer) healthHandler(c *gin.Context) {\n    uptime := time.Since(h.startTime).Seconds()\n    \n    c.JSON(http.StatusOK, gin.H{\n        \"status\": \"healthy\",\n        \"version\": \"1.0.0\",\n        \"uptime\": uptime,\n    })\n}\n\nfunc (h *HealthServer) readyHandler(c *gin.Context) {\n    // Check if sync engine is ready\n    ready := h.engine.IsReady()\n    lastSync := h.stateManager.GetLastSyncTime()\n    sourcesConnected := h.engine.GetConnectedSources()\n    \n    if !ready {\n        c.JSON(http.StatusServiceUnavailable, gin.H{\n            \"ready\": false,\n            \"reason\": \"sync engine not ready\",\n        })\n        return\n    }\n    \n    c.JSON(http.StatusOK, gin.H{\n        \"ready\": true,\n        \"last_sync\": lastSync,\n        \"sources_connected\": sourcesConnected,\n    })\n}\n```",
-      "testStrategy": "Test health endpoint always returns 200 OK, test readiness endpoint returns 503 when not ready, verify JSON response format matches specification",
-      "priority": "medium",
-      "dependencies": [
-        1,
-        7
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Create Health Check Service Structure",
-          "description": "Set up the base health check service with proper initialization, configuration, and dependency injection for monitoring various system components",
-          "dependencies": [],
-          "details": "Create HealthServer struct in internal/monitoring/health.go with fields for sync engine, state manager, logger, and configuration. Implement NewHealthServer constructor that accepts dependencies and initializes the service with proper defaults. Add configuration structure for health check intervals, timeouts, and thresholds. Include fields for tracking component health states and last check timestamps.",
-          "status": "done",
-          "testStrategy": "Write unit tests to verify proper initialization of HealthServer with mock dependencies. Test that all required fields are properly set and configuration is correctly applied."
-        },
-        {
-          "id": 2,
-          "title": "Implement Component Health Checkers",
-          "description": "Create individual health check functions for each critical system component including database connections, sync engine status, and external service connectivity",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement checkDatabaseHealth() to verify database connectivity and query execution. Create checkSyncEngineHealth() to validate sync engine state, active workers, and queue status. Add checkExternalServicesHealth() for checking connectivity to external APIs or services. Each checker should return a ComponentHealth struct with status (healthy/unhealthy/degraded), last check time, error message if any, and relevant metrics. Implement timeout handling for each check to prevent hanging.",
-          "status": "done",
-          "testStrategy": "Create unit tests with mocked components to test each health checker in isolation. Test timeout scenarios, connection failures, and degraded states. Verify proper error handling and status reporting."
-        },
-        {
-          "id": 3,
-          "title": "Build Health Endpoint Handler",
-          "description": "Implement the /health endpoint that performs basic liveness checks and returns overall system health status with detailed component information",
-          "dependencies": [
-            2
-          ],
-          "details": "Create healthHandler that executes all component health checks concurrently using goroutines. Aggregate results to determine overall health status (healthy if all components healthy, degraded if some unhealthy, unhealthy if critical components fail). Return JSON response with overall status, individual component statuses, version info, uptime, and timestamp. Include response caching to prevent excessive health checks. Set appropriate HTTP status codes (200 for healthy/degraded, 503 for unhealthy).",
-          "status": "done",
-          "testStrategy": "Write integration tests that mock various component states and verify correct aggregation logic. Test concurrent execution and timeout handling. Verify response format and HTTP status codes for different scenarios."
-        },
-        {
-          "id": 4,
-          "title": "Build Readiness Endpoint Handler",
-          "description": "Implement the /ready endpoint that checks if the application is ready to serve traffic, including verification of critical dependencies and initialization state",
-          "dependencies": [
-            2
-          ],
-          "details": "Create readyHandler that checks if sync engine is initialized and ready to process requests. Verify database schema migrations are complete and connections are established. Check if minimum number of sync workers are running. Validate that state manager is initialized with valid state. Include checks for required external service connections. Return detailed readiness status with specific failure reasons if not ready. Implement grace period after startup before reporting ready.",
-          "status": "done",
-          "testStrategy": "Test readiness checks during various startup phases. Verify that endpoint correctly reports not ready during initialization and ready once all components are operational. Test edge cases like partial initialization failures."
-        },
-        {
-          "id": 5,
-          "title": "Configure HTTP Server and Kubernetes Integration",
-          "description": "Set up the HTTP server for health endpoints with proper routing, middleware, and Kubernetes-compatible configuration including probe settings",
-          "dependencies": [
-            3,
-            4
-          ],
-          "details": "Configure Gin router with health and readiness endpoints on a separate port (e.g., 8080) from main application. Add middleware for request logging, panic recovery, and timeout handling. Implement graceful shutdown handling that updates health status during shutdown. Add Prometheus metrics for health check results and latencies. Create Kubernetes deployment manifests with proper liveness and readiness probe configurations including initialDelaySeconds, periodSeconds, timeoutSeconds, and failureThreshold. Document recommended probe settings for different deployment scenarios.",
-          "status": "done",
-          "testStrategy": "Test HTTP server startup and shutdown sequences. Verify middleware functionality and error handling. Test with actual Kubernetes probes using minikube or kind. Validate graceful shutdown behavior and metric collection."
-        }
-      ]
-    },
-    {
-      "id": 10,
-      "title": "Implement Structured Logging",
-      "description": "Set up structured logging using zap with proper log levels, JSON formatting, and contextual information",
-      "details": "```go\n// internal/logging/logger.go\nfunc NewLogger(config config.LoggingConfig) (*zap.Logger, error) {\n    var zapConfig zap.Config\n    \n    switch config.Level {\n    case \"debug\":\n        zapConfig = zap.NewDevelopmentConfig()\n    case \"info\", \"warn\", \"error\":\n        zapConfig = zap.NewProductionConfig()\n        zapConfig.Level = zap.NewAtomicLevelAt(getZapLevel(config.Level))\n    default:\n        return nil, fmt.Errorf(\"invalid log level: %s\", config.Level)\n    }\n    \n    if config.Format == \"json\" {\n        zapConfig.Encoding = \"json\"\n    } else {\n        zapConfig.Encoding = \"console\"\n    }\n    \n    // Never log sensitive information\n    zapConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder\n    \n    logger, err := zapConfig.Build(\n        zap.AddCaller(),\n        zap.AddStacktrace(zapcore.ErrorLevel),\n    )\n    if err != nil {\n        return nil, err\n    }\n    \n    return logger, nil\n}\n\n// Wrapper to ensure no sensitive data is logged\nfunc SafeLog(logger *zap.Logger, msg string, fields ...zap.Field) {\n    sanitizedFields := make([]zap.Field, 0, len(fields))\n    for _, field := range fields {\n        if !isSensitiveField(field.Key) {\n            sanitizedFields = append(sanitizedFields, field)\n        }\n    }\n    logger.Info(msg, sanitizedFields...)\n}\n```",
-      "testStrategy": "Verify log levels work correctly, test JSON and console output formats, ensure sensitive data (passwords, tokens) are never logged, test correlation ID propagation",
-      "priority": "medium",
-      "dependencies": [
-        1,
-        2
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Create Logger Configuration Structure",
-          "description": "Define configuration structures for the logging system including log levels, output formats, and sampling configurations",
-          "dependencies": [],
-          "details": "Create a config package with LoggingConfig struct containing fields for Level (debug/info/warn/error), Format (json/console), OutputPath (stdout/file path), ErrorOutputPath, Sampling configuration (initial, thereafter), and MaxSize/MaxBackups for log rotation. Include validation methods to ensure configuration values are valid.",
-          "status": "done",
-          "testStrategy": "Write unit tests to validate configuration parsing, default values, and validation logic for invalid configurations"
-        },
-        {
-          "id": 2,
-          "title": "Implement Core Logger Factory",
-          "description": "Create the NewLogger function that builds zap logger instances based on configuration with proper encoding, level settings, and core options",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement NewLogger function in internal/logging/logger.go that accepts LoggingConfig, sets up appropriate zap.Config based on environment (development vs production), configures JSON or console encoding, adds caller information, stack traces for errors, and sampling to prevent log flooding. Include helper function getZapLevel to convert string levels to zap.AtomicLevel.",
-          "status": "done",
-          "testStrategy": "Test logger creation with different configurations, verify log output format matches expectations, and ensure proper level filtering"
-        },
-        {
-          "id": 3,
-          "title": "Build Sensitive Data Filter",
-          "description": "Implement SafeLog wrapper and field sanitization to prevent logging of sensitive information like passwords, tokens, and personal data",
-          "dependencies": [
-            2
-          ],
-          "details": "Create isSensitiveField function that checks field keys against a list of sensitive patterns (password, token, secret, key, authorization, etc.). Implement SafeLog wrapper that filters out sensitive fields before logging. Add field redaction logic that replaces sensitive values with '[REDACTED]' instead of completely removing fields for better debugging.",
-          "status": "done",
-          "testStrategy": "Test with various sensitive field names and values, verify redaction works correctly, and ensure non-sensitive fields pass through unchanged"
-        },
-        {
-          "id": 4,
-          "title": "Add Correlation ID Support",
-          "description": "Implement correlation ID generation and propagation for tracking requests and operations across the system",
-          "dependencies": [
-            2
-          ],
-          "details": "Create middleware package with correlation ID generator using UUID v4. Implement WithCorrelationID function that adds correlation ID to logger context. Create HTTP middleware that extracts or generates correlation IDs from X-Correlation-ID header and adds to request context. Add helper functions to retrieve logger with correlation ID from context.",
-          "status": "done",
-          "testStrategy": "Test correlation ID generation, propagation through HTTP requests, and presence in log output across multiple log statements"
-        },
-        {
-          "id": 5,
-          "title": "Create Contextual Logger Helpers",
-          "description": "Build helper functions for adding common contextual information to logs such as user ID, request ID, operation name, and duration",
-          "dependencies": [
-            2,
-            4
-          ],
-          "details": "Implement WithContext function that extracts common fields from context (user ID, tenant ID, request ID). Create WithFields helper for adding multiple fields at once. Add WithError helper for consistent error logging with stack traces. Implement operation timing helpers (StartOperation/EndOperation) that log duration automatically. Include request/response logging helpers with size and status information.",
-          "status": "done",
-          "testStrategy": "Verify contextual information appears in logs correctly, test timing calculations, and ensure helpers work with various data types"
-        },
-        {
-          "id": 6,
-          "title": "Implement Log Rotation and Management",
-          "description": "Add log rotation capabilities and implement cleanup policies to manage disk space and log retention",
-          "dependencies": [
-            2
-          ],
-          "details": "Integrate lumberjack for file rotation with configurable MaxSize, MaxBackups, MaxAge, and Compress options. Create log sink that writes to both file and stdout based on configuration. Implement graceful shutdown that flushes buffered logs. Add performance metrics collection for logging operations (logs per second, dropped logs). Create cleanup goroutine for old compressed logs based on retention policy.",
-          "status": "done",
-          "testStrategy": "Test log rotation triggers at correct file sizes, verify old logs are cleaned up according to policy, and ensure no log loss during rotation"
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "title": "Build Error Handling and Retry Logic",
-      "description": "Implement comprehensive error handling with exponential backoff, circuit breakers, and partial failure recovery",
-      "details": "```go\n// internal/sync/retry.go\ntype RetryConfig struct {\n    MaxRetries int\n    InitialDelay time.Duration\n    MaxDelay time.Duration\n    Multiplier float64\n}\n\nfunc WithRetry(ctx context.Context, config RetryConfig, operation func() error) error {\n    var lastErr error\n    delay := config.InitialDelay\n    \n    for attempt := 0; attempt <= config.MaxRetries; attempt++ {\n        if err := operation(); err != nil {\n            lastErr = err\n            \n            if !isRetryable(err) {\n                return err\n            }\n            \n            if attempt < config.MaxRetries {\n                select {\n                case <-time.After(delay):\n                    delay = time.Duration(float64(delay) * config.Multiplier)\n                    if delay > config.MaxDelay {\n                        delay = config.MaxDelay\n                    }\n                case <-ctx.Done():\n                    return ctx.Err()\n                }\n            }\n        } else {\n            return nil\n        }\n    }\n    \n    return fmt.Errorf(\"max retries exceeded: %w\", lastErr)\n}\n\nfunc isRetryable(err error) bool {\n    // Check for network errors, 5xx status codes, etc.\n    var netErr net.Error\n    if errors.As(err, &netErr) && netErr.Temporary() {\n        return true\n    }\n    \n    // Add more retryable error checks\n    return false\n}\n```",
-      "testStrategy": "Test exponential backoff timing, verify non-retryable errors fail immediately, test context cancellation during retry, measure retry performance impact",
-      "priority": "high",
-      "dependencies": [
-        3,
-        7
-      ],
-      "status": "done",
-      "subtasks": [
-        {
-          "id": 1,
-          "title": "Define Error Categories and Classification System",
-          "description": "Create a comprehensive error classification system that categorizes errors as retryable (transient) or non-retryable (permanent), including custom error types and interfaces",
-          "dependencies": [],
-          "details": "Create error types for: network timeouts, rate limiting, service unavailable (503), database connection errors, authentication failures, validation errors, and business logic errors. Implement an ErrorClassifier interface with methods to determine retry eligibility, extract status codes, and identify error categories. Include error wrapping utilities to preserve context while maintaining classification.",
-          "status": "done",
-          "testStrategy": "Unit test each error type classification, verify error wrapping preserves original error information, test edge cases like nil errors and unknown error types"
-        },
-        {
-          "id": 2,
-          "title": "Implement Enhanced Retry Configuration and Jitter",
-          "description": "Extend the existing RetryConfig to include jitter for avoiding thundering herd, retry predicates, and per-operation customization options",
-          "dependencies": [
-            1
-          ],
-          "details": "Add jitter calculation to prevent synchronized retries across multiple clients. Implement retry predicates that can inspect error types and response codes. Add configuration for retry-after header support, custom backoff strategies (linear, exponential, fibonacci), and operation-specific retry policies. Include context deadline awareness to avoid retrying beyond request timeout.",
-          "status": "done",
-          "testStrategy": "Test jitter distribution across multiple retry attempts, verify backoff calculations with different strategies, ensure context cancellation stops retries immediately"
-        },
-        {
-          "id": 3,
-          "title": "Build Circuit Breaker Implementation",
-          "description": "Create a circuit breaker pattern implementation with configurable thresholds, half-open state testing, and automatic recovery",
-          "dependencies": [
-            1
-          ],
-          "details": "Implement three states: closed (normal operation), open (failing fast), and half-open (testing recovery). Configure failure threshold percentage, minimum request volume, timeout duration, and success threshold for recovery. Use sliding window for tracking request outcomes. Include metrics collection for monitoring circuit state transitions and failure rates.",
-          "status": "done",
-          "testStrategy": "Test state transitions under various failure scenarios, verify half-open state allows limited requests, test automatic recovery after timeout period"
-        },
-        {
-          "id": 4,
-          "title": "Create Partial Failure Recovery Manager",
-          "description": "Implement mechanisms to handle partial failures in batch operations, including rollback strategies and compensation logic",
-          "dependencies": [
-            1,
-            2
-          ],
-          "details": "Build a transaction log for tracking partial completions in batch operations. Implement checkpoint-based recovery for resumable operations. Create compensation handlers for reversing partially completed operations. Add support for idempotency keys to prevent duplicate processing during retries. Include progress tracking and partial result aggregation.",
-          "status": "done",
-          "testStrategy": "Test recovery from failures at different points in batch processing, verify idempotency prevents duplicate operations, test compensation logic reverses partial changes correctly"
-        },
-        {
-          "id": 5,
-          "title": "Develop Retry Metrics and Observability",
-          "description": "Implement comprehensive metrics collection for retry attempts, circuit breaker states, and error patterns to enable monitoring and alerting",
-          "dependencies": [
-            2,
-            3
-          ],
-          "details": "Track metrics including: retry attempt counts by error type, retry success/failure rates, circuit breaker state changes and trip reasons, latency impact of retries, and error frequency patterns. Implement OpenTelemetry integration for distributed tracing of retry chains. Add structured logging with correlation IDs for debugging retry sequences.",
-          "status": "done",
-          "testStrategy": "Verify metrics are accurately recorded for all retry scenarios, test trace propagation across retry attempts, ensure no performance degradation from metrics collection"
-        },
-        {
-          "id": 6,
-          "title": "Build Adaptive Retry Strategy Engine",
-          "description": "Create an intelligent retry system that adapts retry behavior based on historical success rates and system load",
-          "dependencies": [
-            2,
-            3,
-            5
-          ],
-          "details": "Implement machine learning-inspired algorithms to adjust retry parameters dynamically. Track success rates per error type and endpoint. Reduce retry aggressiveness during high load periods. Implement token bucket rate limiting for retry attempts. Add priority-based retry queuing for critical operations. Include feedback loops from circuit breaker states to influence retry decisions.",
-          "status": "done",
-          "testStrategy": "Test adaptation under varying load conditions, verify retry reduction during system stress, test priority queue ordering under concurrent operations"
-        },
-        {
-          "id": 7,
-          "title": "Create Integration Layer and Middleware",
-          "description": "Build HTTP middleware and gRPC interceptors that automatically apply retry logic, circuit breakers, and error handling to all outbound requests",
-          "dependencies": [
-            1,
-            2,
-            3,
-            4,
-            6
-          ],
-          "details": "Implement HTTP RoundTripper wrapper with automatic retry and circuit breaker integration. Create gRPC unary and streaming interceptors with retry support. Add configuration hot-reloading for runtime adjustment of retry policies. Implement request hedging for latency-sensitive operations. Include distributed circuit breaker coordination using Redis or similar for multi-instance deployments.",
-          "status": "done",
-          "testStrategy": "Integration test with real HTTP/gRPC services, test configuration changes without service restart, verify distributed circuit breaker coordination across multiple instances"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "Create Docker Image and Compose Configuration",
-      "description": "Build multi-stage Dockerfile for the application and create Docker Compose configuration for local deployment",
-      "details": "```dockerfile\n# Dockerfile\n# Build stage\nFROM golang:1.21-alpine AS builder\n\nRUN apk add --no-cache git ca-certificates\n\nWORKDIR /app\n\nCOPY go.mod go.sum ./\nRUN go mod download\n\nCOPY . .\nRUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o harbor-replicator ./cmd/replicator\n\n# Final stage\nFROM alpine:3.19\n\nRUN apk --no-cache add ca-certificates tzdata\n\nWORKDIR /app\n\nCOPY --from=builder /app/harbor-replicator .\nCOPY config/replicator.yaml /config/replicator.yaml\n\nEXPOSE 8080 9090\n\nUSER 1000:1000\n\nENTRYPOINT [\"./harbor-replicator\"]\nCMD [\"--config\", \"/config/replicator.yaml\"]\n```\n\nCreate docker-compose.yaml as specified in PRD with proper volume mounts, environment variables, and network configuration",
-      "testStrategy": "Build Docker image and verify it runs, test volume mounts work correctly, verify environment variable substitution, test container health checks",
-      "priority": "medium",
-      "dependencies": [
-        1,
-        7,
-        8,
-        9
-      ],
-      "status": "pending",
-      "subtasks": []
-    },
-    {
-      "id": 13,
-      "title": "Create Kubernetes Manifests",
-      "description": "Develop complete Kubernetes deployment manifests including Deployment, Service, ConfigMap, Secret, and PVC resources",
-      "details": "Create Kubernetes manifests as specified in PRD:\n- Deployment with proper resource limits and health checks\n- Service for metrics and health endpoints\n- ConfigMap for application configuration\n- Secret for Harbor credentials\n- PersistentVolumeClaim for state storage\n\nAdd additional resources:\n```yaml\n# ServiceMonitor for Prometheus Operator\napiVersion: monitoring.coreos.com/v1\nkind: ServiceMonitor\nmetadata:\n  name: harbor-replicator\n  namespace: harbor\nspec:\n  selector:\n    matchLabels:\n      app: harbor-replicator\n  endpoints:\n  - port: metrics\n    interval: 30s\n    path: /metrics\n```\n\nImplement Helm chart structure for easier deployment:\n```\nharbor-replicator/\n├── Chart.yaml\n├── values.yaml\n└── templates/\n    ├── deployment.yaml\n    ├── service.yaml\n    ├── configmap.yaml\n    ├── secret.yaml\n    └── pvc.yaml\n```",
-      "testStrategy": "Deploy to test Kubernetes cluster, verify all resources are created correctly, test pod restarts maintain state, verify metrics are scraped by Prometheus",
-      "priority": "medium",
-      "dependencies": [
-        12
-      ],
-      "status": "pending",
-      "subtasks": []
-    },
-    {
-      "id": 14,
-      "title": "Implement Integration Tests",
-      "description": "Create comprehensive integration tests that verify end-to-end synchronization flows against real Harbor instances",
-      "details": "```go\n// test/integration/sync_test.go\nfunc TestFullSynchronizationFlow(t *testing.T) {\n    // Setup test Harbor instances using testcontainers\n    ctx := context.Background()\n    \n    localHarbor := setupTestHarbor(t, \"local\")\n    remoteHarbor := setupTestHarbor(t, \"remote\")\n    \n    // Create test resources in remote Harbor\n    remoteClient := createTestClient(remoteHarbor)\n    testRobot := createTestRobotAccount(t, remoteClient)\n    testGroup := createTestOIDCGroup(t, remoteClient)\n    \n    // Configure and start replicator\n    config := &config.Config{\n        LocalHarbor: getHarborConfig(localHarbor),\n        RemoteHarbors: []config.RemoteHarborConfig{\n            getHarborConfig(remoteHarbor),\n        },\n    }\n    \n    engine := setupSyncEngine(t, config)\n    require.NoError(t, engine.Start(ctx))\n    \n    // Wait for sync to complete\n    time.Sleep(5 * time.Second)\n    \n    // Verify resources exist in local Harbor\n    localClient := createTestClient(localHarbor)\n    \n    robots, err := localClient.ListSystemRobotAccounts(ctx)\n    require.NoError(t, err)\n    assert.Contains(t, getRobotNames(robots), testRobot.Name)\n    \n    groups, err := localClient.ListOIDCGroups(ctx)\n    require.NoError(t, err)\n    assert.Contains(t, getGroupNames(groups), testGroup.Name)\n}\n```\n\nCreate performance tests to verify sync completes within SLA for 1000+ resources",
-      "testStrategy": "Run integration tests in CI/CD pipeline, use testcontainers for Harbor instances, measure sync performance metrics, test failure scenarios and recovery",
-      "priority": "high",
-      "dependencies": [
-        5,
-        6,
-        7
-      ],
-      "status": "pending",
-      "subtasks": []
-    },
-    {
-      "id": 15,
-      "title": "Create Documentation and CI/CD Pipeline",
-      "description": "Write comprehensive documentation including README, API docs, deployment guides, and set up CI/CD pipeline for automated testing and releases",
-      "details": "Create documentation:\n```markdown\n# README.md\n# Harbor Registry Replicator\n\n## Overview\nHarbor Registry Replicator synchronizes robot accounts and OIDC groups...\n\n## Quick Start\n### Docker\n```bash\ndocker-compose up -d\n```\n\n### Kubernetes\n```bash\nkubectl apply -f deployments/kubernetes/\n```\n\n## Configuration\n[Detailed configuration guide]\n\n## Monitoring\n[Metrics and alerting setup]\n```\n\nCreate CI/CD pipeline (.github/workflows/ci.yaml):\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v3\n    - uses: actions/setup-go@v4\n      with:\n        go-version: '1.21'\n    - run: make test\n    - run: make lint\n    - run: make build\n    \n  integration:\n    runs-on: ubuntu-latest\n    services:\n      harbor:\n        image: goharbor/harbor-core:latest\n    steps:\n    - run: make integration-test\n    \n  release:\n    if: startsWith(github.ref, 'refs/tags/')\n    runs-on: ubuntu-latest\n    steps:\n    - run: make docker-build\n    - run: make docker-push\n```",
-      "testStrategy": "Verify documentation is accurate and complete, test all code examples work, ensure CI/CD pipeline catches failures, test release process creates proper artifacts",
-      "priority": "medium",
-      "dependencies": [
-        14
-      ],
-      "status": "pending",
-      "subtasks": []
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Initialize Go Project Structure",
+        "description": "Set up the Go project with proper module structure, dependencies, and directory layout following Go best practices",
+        "details": "Create project structure:\n```\nharbor-replicator/\n├── cmd/\n│   └── replicator/\n│       └── main.go\n├── internal/\n│   ├── config/\n│   ├── harbor/\n│   ├── sync/\n│   ├── state/\n│   └── monitoring/\n├── pkg/\n│   └── models/\n├── config/\n│   └── replicator.yaml\n├── deployments/\n│   ├── docker/\n│   └── kubernetes/\n├── go.mod\n├── go.sum\n├── Dockerfile\n└── Makefile\n```\nInitialize go module: `go mod init github.com/company/harbor-replicator`\nAdd core dependencies:\n- github.com/goharbor/go-client v0.210.0\n- github.com/spf13/viper\n- go.uber.org/zap\n- github.com/prometheus/client_golang\n- github.com/gin-gonic/gin",
+        "testStrategy": "Verify project builds successfully with `go build ./...`, ensure all directories are created, and dependencies are properly resolved with `go mod tidy`",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "Implement Configuration Manager",
+        "description": "Create a configuration management system using Viper to load and validate YAML configurations with support for environment variable substitution",
+        "details": "```go\n// internal/config/config.go\ntype Config struct {\n    Replicator ReplicatorConfig `mapstructure:\"replicator\"`\n    LocalHarbor HarborConfig `mapstructure:\"local_harbor\"`\n    RemoteHarbors []RemoteHarborConfig `mapstructure:\"remote_harbors\"`\n    SyncResources SyncResourcesConfig `mapstructure:\"sync_resources\"`\n    Logging LoggingConfig `mapstructure:\"logging\"`\n    Monitoring MonitoringConfig `mapstructure:\"monitoring\"`\n}\n\nfunc LoadConfig(path string) (*Config, error) {\n    viper.SetConfigFile(path)\n    viper.SetEnvPrefix(\"HARBOR\")\n    viper.AutomaticEnv()\n    \n    if err := viper.ReadInConfig(); err != nil {\n        return nil, err\n    }\n    \n    var config Config\n    if err := viper.Unmarshal(&config); err != nil {\n        return nil, err\n    }\n    \n    return &config, config.Validate()\n}\n\nfunc (c *Config) Validate() error {\n    // Validate URLs, required fields, etc.\n}\n```\nImplement hot-reload capability using viper.WatchConfig() and viper.OnConfigChange()",
+        "testStrategy": "Unit tests for configuration loading with valid/invalid YAML files, environment variable substitution tests, validation tests for missing required fields, and integration tests for configuration hot-reload",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Configuration Data Structures",
+            "description": "Create comprehensive Go structs for all configuration sections including ReplicatorConfig, HarborConfig, RemoteHarborConfig, SyncResourcesConfig, LoggingConfig, and MonitoringConfig with proper struct tags for Viper mapping",
+            "dependencies": [],
+            "details": "Define structs in internal/config/types.go with mapstructure tags, include fields for URLs, credentials, timeouts, retry policies, resource filters, and monitoring endpoints. Add JSON tags for serialization and validation tags for future use",
+            "status": "done",
+            "testStrategy": "Unit tests to verify struct marshaling/unmarshaling with sample YAML data"
+          },
+          {
+            "id": 2,
+            "title": "Implement Basic Configuration Loading",
+            "description": "Create the core LoadConfig function using Viper to read YAML configuration files and unmarshal into Config struct with environment variable substitution support",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement LoadConfig in internal/config/config.go, set up Viper with SetConfigFile, SetEnvPrefix('HARBOR'), AutomaticEnv(), and SetEnvKeyReplacer for nested env vars. Handle file reading errors and unmarshaling errors with descriptive messages",
+            "status": "done",
+            "testStrategy": "Integration tests with sample YAML files and environment variable overrides"
+          },
+          {
+            "id": 3,
+            "title": "Implement Configuration Validation",
+            "description": "Create comprehensive validation logic for all configuration fields including URL validation, required field checks, credential validation, and logical consistency checks",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement Validate() method on Config struct and nested validation methods for each sub-configuration. Validate URLs using net/url package, check for required fields, validate port ranges, timeout values, and ensure remote Harbor configurations have unique names",
+            "status": "done",
+            "testStrategy": "Unit tests with various invalid configurations to ensure proper error messages"
+          },
+          {
+            "id": 4,
+            "title": "Add Configuration Hot-Reload Support",
+            "description": "Implement configuration file watching and hot-reload capability using Viper's WatchConfig and OnConfigChange functions with proper synchronization",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Create WatchConfig method that uses viper.WatchConfig() and registers OnConfigChange callback. Implement thread-safe configuration updates using sync.RWMutex, validate new configuration before applying, and provide hooks for components to react to config changes",
+            "status": "done",
+            "testStrategy": "Integration tests simulating file changes and verifying configuration updates"
+          },
+          {
+            "id": 5,
+            "title": "Create Configuration Manager Service",
+            "description": "Build a ConfigManager service that encapsulates configuration loading, watching, and provides thread-safe access to current configuration with change notifications",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "Create internal/config/manager.go with ConfigManager struct containing current config, mutex, and change listeners. Implement methods: NewConfigManager, GetConfig, RegisterChangeListener, and internal reload logic. Use channels for change notifications",
+            "status": "done",
+            "testStrategy": "Unit tests for concurrent access and change notification delivery"
+          },
+          {
+            "id": 6,
+            "title": "Implement Environment Variable Substitution",
+            "description": "Enhance configuration loading to support complex environment variable substitution patterns including nested variables and default values",
+            "dependencies": [
+              2
+            ],
+            "details": "Extend Viper configuration to handle patterns like ${VAR_NAME}, ${VAR_NAME:-default}, and nested substitutions. Use viper.SetEnvKeyReplacer to map nested config keys to environment variables with proper delimiters (e.g., HARBOR_LOCAL_HARBOR_URL)",
+            "status": "done",
+            "testStrategy": "Unit tests with various environment variable patterns and edge cases"
+          },
+          {
+            "id": 7,
+            "title": "Add Configuration Export and Import Utilities",
+            "description": "Create utilities to export current configuration (with secrets masked) and import configuration with validation for debugging and migration purposes",
+            "dependencies": [
+              1,
+              3,
+              5
+            ],
+            "details": "Implement ExportConfig method that serializes current config to YAML with sensitive fields masked, and ImportConfig that loads and validates external configuration. Add command-line flags for config operations in cmd package",
+            "status": "done",
+            "testStrategy": "Integration tests for export/import round-trip with secret masking verification"
+          },
+          {
+            "id": 8,
+            "title": "Create Configuration Documentation and Examples",
+            "description": "Generate comprehensive configuration documentation including all available options, environment variable mappings, and example configurations for common scenarios",
+            "dependencies": [
+              1,
+              3,
+              6
+            ],
+            "details": "Create configs/example.yaml with fully documented configuration, generate markdown documentation from struct tags, include examples for single/multi-harbor setups, and document environment variable naming conventions. Add configuration validation CLI command",
+            "status": "done",
+            "testStrategy": "Manual verification that example configurations pass validation"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Create Harbor Client Wrapper",
+        "description": "Implement a wrapper around the Harbor go-client v0.210.0 with authentication, connection pooling, and error handling",
+        "details": "```go\n// internal/harbor/client.go\ntype HarborClient struct {\n    client *client.Harbor\n    config HarborConfig\n    logger *zap.Logger\n}\n\nfunc NewHarborClient(config HarborConfig, logger *zap.Logger) (*HarborClient, error) {\n    cfg := &client.Config{\n        URL:      config.URL,\n        Username: config.Username,\n        Password: config.Password,\n        Insecure: config.InsecureSkipVerify,\n    }\n    \n    harborClient := client.NewWithConfig(cfg)\n    \n    // Test connection\n    ctx := context.Background()\n    _, err := harborClient.System.GetSystemInfo(ctx, &system.GetSystemInfoParams{})\n    if err != nil {\n        return nil, fmt.Errorf(\"failed to connect to Harbor: %w\", err)\n    }\n    \n    return &HarborClient{\n        client: harborClient,\n        config: config,\n        logger: logger,\n    }, nil\n}\n\n// Implement methods for robot accounts and OIDC groups\nfunc (h *HarborClient) ListSystemRobotAccounts(ctx context.Context) ([]*model.Robot, error) {}\nfunc (h *HarborClient) ListProjectRobotAccounts(ctx context.Context, projectName string) ([]*model.Robot, error) {}\nfunc (h *HarborClient) ListOIDCGroups(ctx context.Context) ([]*model.UserGroup, error) {}\n```",
+        "testStrategy": "Mock Harbor API responses using httptest, test authentication failures, connection timeouts, and API error handling. Integration tests against a test Harbor instance",
+        "priority": "high",
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Harbor Client Configuration Structure",
+            "description": "Create a comprehensive configuration structure for the Harbor client that includes connection settings, authentication details, retry policies, rate limiting, and circuit breaker configurations",
+            "dependencies": [],
+            "details": "Define HarborConfig struct with fields for URL, username, password, TLS settings, timeout values, retry attempts, rate limit settings (requests per second), circuit breaker thresholds, and connection pool size. Include validation methods to ensure configuration values are within acceptable ranges",
+            "status": "done",
+            "testStrategy": "Write unit tests to validate configuration parsing and validation logic, including edge cases for invalid values"
+          },
+          {
+            "id": 2,
+            "title": "Implement HTTP Transport with Connection Pooling",
+            "description": "Create a custom HTTP transport layer that implements connection pooling, timeout handling, and TLS configuration for the Harbor client",
+            "dependencies": [
+              1
+            ],
+            "details": "Configure http.Transport with MaxIdleConns, MaxIdleConnsPerHost, IdleConnTimeout, and TLS settings based on the configuration. Implement a transport wrapper that can be injected into the Harbor go-client for better control over HTTP connections",
+            "status": "done",
+            "testStrategy": "Test connection pooling behavior by simulating multiple concurrent requests and verifying connection reuse metrics"
+          },
+          {
+            "id": 3,
+            "title": "Implement Rate Limiter Middleware",
+            "description": "Create a rate limiting middleware that controls the number of requests per second to the Harbor API to prevent overwhelming the server",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Use golang.org/x/time/rate package to implement a token bucket rate limiter. Create a middleware that wraps HTTP requests and blocks when rate limit is exceeded. Make the rate configurable through HarborConfig",
+            "status": "done",
+            "testStrategy": "Write tests that verify rate limiting by sending bursts of requests and measuring actual throughput against configured limits"
+          },
+          {
+            "id": 4,
+            "title": "Implement Circuit Breaker Pattern",
+            "description": "Add circuit breaker functionality to prevent cascading failures when Harbor API is experiencing issues",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Use github.com/sony/gobreaker or implement a custom circuit breaker that tracks failure rates and opens the circuit when threshold is exceeded. Configure thresholds for failure rate, consecutive failures, and timeout duration. Integrate with the HTTP transport layer",
+            "status": "done",
+            "testStrategy": "Test circuit breaker states (closed, open, half-open) by simulating API failures and verifying appropriate state transitions"
+          },
+          {
+            "id": 5,
+            "title": "Create Error Handling and Retry Logic",
+            "description": "Implement comprehensive error handling with categorization of errors (transient vs permanent) and exponential backoff retry logic for transient failures",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Create error wrapper types that categorize Harbor API errors. Implement retry logic with exponential backoff for transient errors (network issues, 5xx errors). Skip retries for permanent errors (4xx errors). Include jitter in backoff calculation to prevent thundering herd",
+            "status": "done",
+            "testStrategy": "Test retry behavior with mock responses simulating various error scenarios and verify backoff timing"
+          },
+          {
+            "id": 6,
+            "title": "Implement Core Harbor Client Wrapper",
+            "description": "Create the main HarborClient struct that wraps the Harbor go-client and integrates all middleware components",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "details": "Implement NewHarborClient constructor that initializes the go-client with custom transport, applies rate limiting and circuit breaker middleware. Add connection validation logic that tests Harbor connectivity during initialization. Include structured logging with zap for all operations",
+            "status": "done",
+            "testStrategy": "Integration tests that verify client initialization with various configurations and connection scenarios"
+          },
+          {
+            "id": 7,
+            "title": "Implement Robot Account Operations",
+            "description": "Add methods for listing and managing system-level and project-level robot accounts with proper error handling and logging",
+            "dependencies": [
+              6
+            ],
+            "details": "Implement ListSystemRobotAccounts and ListProjectRobotAccounts methods with pagination support. Handle API responses, transform to internal models, and apply retry logic. Include detailed logging of operations and errors. Support filtering and sorting options",
+            "status": "done",
+            "testStrategy": "Mock Harbor API responses to test robot account listing with various scenarios including empty results, pagination, and errors"
+          },
+          {
+            "id": 8,
+            "title": "Implement OIDC Group Operations",
+            "description": "Add methods for listing and managing OIDC groups with proper error handling and pagination support",
+            "dependencies": [
+              6
+            ],
+            "details": "Implement ListOIDCGroups method with support for filtering by group type. Handle pagination for large result sets. Transform API responses to internal UserGroup models. Include proper error handling for OIDC-specific errors",
+            "status": "done",
+            "testStrategy": "Test OIDC group operations with mocked responses covering various group configurations and error scenarios"
+          },
+          {
+            "id": 9,
+            "title": "Add Metrics and Observability",
+            "description": "Implement metrics collection for monitoring client performance, API call rates, error rates, and circuit breaker states",
+            "dependencies": [
+              6,
+              7,
+              8
+            ],
+            "details": "Use Prometheus client library to expose metrics for request count, request duration, error rates by type, circuit breaker state changes, and connection pool statistics. Create middleware to automatically collect metrics for all API calls",
+            "status": "done",
+            "testStrategy": "Verify metrics are correctly incremented during various operations and error scenarios"
+          },
+          {
+            "id": 10,
+            "title": "Create Client Health Check and Diagnostics",
+            "description": "Implement health check endpoints and diagnostic methods to monitor Harbor client status and connectivity",
+            "dependencies": [
+              6,
+              7,
+              8,
+              9
+            ],
+            "details": "Add HealthCheck method that verifies Harbor connectivity and returns detailed status including circuit breaker state, rate limiter status, and recent error statistics. Implement GetDiagnostics method that returns comprehensive client state information for debugging",
+            "status": "done",
+            "testStrategy": "Test health check behavior under various client states and verify diagnostic information accuracy"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Implement State Manager",
+        "description": "Create a state management system to track synchronization progress and maintain resource mappings between Harbor instances",
+        "details": "```go\n// internal/state/manager.go\ntype StateManager struct {\n    mu sync.RWMutex\n    state *SyncState\n    filePath string\n    logger *zap.Logger\n}\n\ntype SyncState struct {\n    LastSync map[string]time.Time `json:\"last_sync\"`\n    ResourceMappings map[string]ResourceMapping `json:\"resource_mappings\"`\n    SyncErrors []SyncError `json:\"sync_errors\"`\n}\n\nfunc NewStateManager(filePath string, logger *zap.Logger) (*StateManager, error) {\n    sm := &StateManager{\n        filePath: filePath,\n        logger: logger,\n    }\n    \n    if err := sm.Load(); err != nil {\n        if !os.IsNotExist(err) {\n            return nil, err\n        }\n        sm.state = &SyncState{\n            LastSync: make(map[string]time.Time),\n            ResourceMappings: make(map[string]ResourceMapping),\n        }\n    }\n    \n    return sm, nil\n}\n\nfunc (sm *StateManager) Save() error {\n    sm.mu.RLock()\n    defer sm.mu.RUnlock()\n    \n    data, err := json.MarshalIndent(sm.state, \"\", \"  \")\n    if err != nil {\n        return err\n    }\n    \n    return os.WriteFile(sm.filePath, data, 0644)\n}\n```",
+        "testStrategy": "Unit tests for state persistence and recovery, concurrent access tests, corruption recovery tests, and performance tests with large state files",
+        "priority": "medium",
+        "dependencies": [
+          1
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Core State Data Structures",
+            "description": "Create the complete data structures for StateManager including ResourceMapping, SyncError, and extend SyncState with additional fields for tracking sync operations",
+            "dependencies": [],
+            "details": "Define ResourceMapping struct with fields like SourceID, TargetID, ResourceType, and LastModified. Define SyncError struct with Timestamp, ResourceType, ResourceID, Error message, and Retry count. Extend SyncState to include SyncInProgress flag, CurrentSyncID, and ResourceVersions map for tracking resource versions",
+            "status": "done",
+            "testStrategy": "Unit tests to verify struct initialization, JSON marshaling/unmarshaling, and field validation"
+          },
+          {
+            "id": 2,
+            "title": "Implement State Persistence Methods",
+            "description": "Implement Load() and Save() methods with atomic file operations, backup creation, and error recovery mechanisms",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement Load() to read state from disk with JSON unmarshaling and validation. Enhance Save() with atomic write using temporary file and rename, create backup before save, implement file locking to prevent concurrent writes, and add compression support for large state files",
+            "status": "done",
+            "testStrategy": "Test file operations with mock filesystem, verify atomic writes, test corruption recovery, and concurrent access scenarios"
+          },
+          {
+            "id": 3,
+            "title": "Create Resource Mapping Management Methods",
+            "description": "Implement methods to add, update, retrieve, and delete resource mappings between source and target Harbor instances",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement AddMapping(), UpdateMapping(), GetMapping(), DeleteMapping(), and GetMappingsByType() methods. Include validation for duplicate mappings, orphaned mappings cleanup, and mapping conflict resolution. Add methods for bulk operations and mapping queries",
+            "status": "done",
+            "testStrategy": "Test CRUD operations, concurrent access with mutex verification, mapping validation rules, and query performance"
+          },
+          {
+            "id": 4,
+            "title": "Implement Sync Progress Tracking",
+            "description": "Create methods to track and update synchronization progress including start, update, and completion of sync operations",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement StartSync(), UpdateSyncProgress(), CompleteSyncForResource(), and FailSyncForResource() methods. Add progress percentage calculation, estimated time remaining, resource-level progress tracking, and sync history maintenance with configurable retention",
+            "status": "done",
+            "testStrategy": "Test state transitions, progress calculations, concurrent sync tracking, and history retention policies"
+          },
+          {
+            "id": 5,
+            "title": "Add Error Handling and Recovery Methods",
+            "description": "Implement comprehensive error tracking, retry logic, and state recovery mechanisms for failed synchronizations",
+            "dependencies": [
+              1,
+              4
+            ],
+            "details": "Implement RecordError(), GetErrors(), ClearErrors(), and GetErrorsByResource() methods. Add exponential backoff retry logic, error categorization (transient vs permanent), automatic error cleanup based on age, and methods to analyze error patterns for alerting",
+            "status": "done",
+            "testStrategy": "Test error recording and retrieval, retry logic with various failure scenarios, error cleanup, and pattern detection algorithms"
+          },
+          {
+            "id": 6,
+            "title": "Create State Query and Reporting Methods",
+            "description": "Implement methods to query state information and generate synchronization reports for monitoring and debugging",
+            "dependencies": [
+              3,
+              4,
+              5
+            ],
+            "details": "Implement GetSyncStatus(), GetLastSyncTime(), GetPendingResources(), GenerateSyncReport(), and GetResourceHistory() methods. Add filtering and pagination support, export functionality for different formats (JSON, CSV), metrics calculation (sync rate, error rate), and state validation/consistency checks",
+            "status": "done",
+            "testStrategy": "Test query performance with large datasets, verify report accuracy, test export formats, and validate metric calculations"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Build Robot Account Synchronization",
+        "description": "Implement synchronization logic for both system-wide and project-specific robot accounts with conflict resolution",
+        "details": "```go\n// internal/sync/robot_accounts.go\ntype RobotAccountSynchronizer struct {\n    localClient *harbor.HarborClient\n    remoteClients map[string]*harbor.HarborClient\n    stateManager *state.StateManager\n    logger *zap.Logger\n}\n\nfunc (s *RobotAccountSynchronizer) SyncSystemRobots(ctx context.Context, source string) error {\n    remoteRobots, err := s.remoteClients[source].ListSystemRobotAccounts(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list remote robots: %w\", err)\n    }\n    \n    localRobots, err := s.localClient.ListSystemRobotAccounts(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list local robots: %w\", err)\n    }\n    \n    // Create name-based index\n    localIndex := make(map[string]*model.Robot)\n    for _, robot := range localRobots {\n        localIndex[robot.Name] = robot\n    }\n    \n    for _, remoteRobot := range remoteRobots {\n        if localRobot, exists := localIndex[remoteRobot.Name]; exists {\n            // Update if different\n            if !s.robotsEqual(remoteRobot, localRobot) {\n                if err := s.updateRobot(ctx, remoteRobot); err != nil {\n                    s.logger.Error(\"failed to update robot\", zap.Error(err))\n                }\n            }\n        } else {\n            // Create new\n            if err := s.createRobot(ctx, remoteRobot); err != nil {\n                s.logger.Error(\"failed to create robot\", zap.Error(err))\n            }\n        }\n    }\n    \n    return nil\n}\n```",
+        "testStrategy": "Test robot creation, updates, and conflict resolution. Mock scenarios with matching names but different permissions. Test error handling for partial failures",
+        "priority": "high",
+        "dependencies": [
+          3,
+          4
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Robot Account Models and Interfaces",
+            "description": "Create comprehensive data models for robot accounts including system-wide and project-specific types, along with interfaces for synchronization operations",
+            "dependencies": [],
+            "details": "Define Robot struct with fields for ID, Name, Description, Type (system/project), ProjectID, Permissions, Secret, CreationTime, ExpirationTime, and Disabled status. Create RobotSynchronizer interface with methods for listing, creating, updating, and deleting robots. Include RobotFilter struct for pattern-based filtering with name patterns, project patterns, and type filters.",
+            "status": "done",
+            "testStrategy": "Unit tests to validate model serialization/deserialization and interface compliance"
+          },
+          {
+            "id": 2,
+            "title": "Implement Secure Token and Secret Management",
+            "description": "Build secure handling for robot account tokens and secrets including encryption, storage, and retrieval mechanisms",
+            "dependencies": [
+              1
+            ],
+            "details": "Create SecretManager component that encrypts robot secrets before storage using AES-256, stores encrypted secrets in state manager with metadata, provides secure retrieval with decryption, and implements secret rotation capabilities. Include methods for generating new secrets, validating existing ones, and securely comparing secrets without exposing them in logs.",
+            "status": "done",
+            "testStrategy": "Security-focused tests including encryption/decryption validation, secret comparison without exposure, and rotation scenarios"
+          },
+          {
+            "id": 3,
+            "title": "Build Robot Account Comparison and Conflict Detection",
+            "description": "Implement logic to compare robot accounts between instances and detect conflicts based on names and permissions",
+            "dependencies": [
+              1
+            ],
+            "details": "Create robotsEqual method that compares all relevant fields except secrets and timestamps. Implement conflict detection that identifies robots with same name but different permissions, same name in different projects, or overlapping permission scopes. Build RobotConflict struct to capture conflict details including conflicting robots, conflict type, and suggested resolution.",
+            "status": "done",
+            "testStrategy": "Unit tests with various robot configurations to validate comparison logic and conflict detection accuracy"
+          },
+          {
+            "id": 4,
+            "title": "Implement System-Wide Robot Account Synchronization",
+            "description": "Complete the system-wide robot account synchronization logic with proper error handling and state tracking",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Enhance the existing SyncSystemRobots method to handle robot creation with secure secret management, update existing robots while preserving secrets unless explicitly changed, track synchronization state for each robot, and implement batch operations for efficiency. Add support for dry-run mode to preview changes before applying them.",
+            "status": "done",
+            "testStrategy": "Integration tests simulating various sync scenarios including creates, updates, and conflict resolution"
+          },
+          {
+            "id": 5,
+            "title": "Implement Project-Specific Robot Account Synchronization",
+            "description": "Build synchronization logic for project-specific robot accounts with project context awareness",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Create SyncProjectRobots method that synchronizes robots within specific project contexts, handles project ID mapping between instances, ensures project exists before creating project robots, and maintains project-robot associations. Include logic to handle robots that reference non-existent projects and options to create missing projects or skip those robots.",
+            "status": "done",
+            "testStrategy": "Integration tests with multiple projects and various robot-project associations"
+          },
+          {
+            "id": 6,
+            "title": "Build Filtering and Selection Logic",
+            "description": "Implement pattern-based filtering for selective robot account synchronization",
+            "dependencies": [
+              1
+            ],
+            "details": "Create RobotFilter implementation supporting glob patterns for robot names, regex patterns for advanced matching, project-based filtering, permission-based filtering, and exclusion patterns. Build ApplyFilter method that processes robot lists through configured filters and returns filtered results with filter match details.",
+            "status": "done",
+            "testStrategy": "Unit tests with various filter patterns and robot configurations to ensure accurate filtering"
+          },
+          {
+            "id": 7,
+            "title": "Implement Conflict Resolution Strategies",
+            "description": "Build configurable conflict resolution strategies for handling robot account conflicts during synchronization",
+            "dependencies": [
+              3,
+              4,
+              5
+            ],
+            "details": "Create ConflictResolver with strategies including 'source-wins' (remote robot takes precedence), 'target-wins' (local robot preserved), 'merge-permissions' (combine permission sets), 'rename-duplicate' (append suffix to conflicting names), and 'interactive' (prompt for user decision). Implement strategy selection based on configuration and conflict type.",
+            "status": "done",
+            "testStrategy": "Unit tests for each resolution strategy with various conflict scenarios"
+          },
+          {
+            "id": 8,
+            "title": "Add Monitoring and Reporting for Robot Synchronization",
+            "description": "Implement comprehensive monitoring, logging, and reporting for robot account synchronization operations",
+            "dependencies": [
+              4,
+              5,
+              6,
+              7
+            ],
+            "details": "Create RobotSyncReport struct capturing robots created/updated/skipped, conflicts encountered and resolutions, secrets rotated, and errors encountered. Implement detailed logging with structured fields for robot names, projects, and operations. Add metrics collection for sync duration, robot counts by type, and conflict resolution outcomes. Build report generation in multiple formats (JSON, table, summary).",
+            "status": "done",
+            "testStrategy": "Integration tests validating report accuracy and completeness across various sync scenarios"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Build OIDC Group Synchronization",
+        "description": "Implement synchronization for OIDC member groups including their roles, permissions, and project associations",
+        "details": "```go\n// internal/sync/oidc_groups.go\ntype OIDCGroupSynchronizer struct {\n    localClient *harbor.HarborClient\n    remoteClients map[string]*harbor.HarborClient\n    stateManager *state.StateManager\n    logger *zap.Logger\n}\n\nfunc (s *OIDCGroupSynchronizer) SyncGroups(ctx context.Context, source string) error {\n    remoteGroups, err := s.remoteClients[source].ListOIDCGroups(ctx)\n    if err != nil {\n        return fmt.Errorf(\"failed to list remote groups: %w\", err)\n    }\n    \n    for _, group := range remoteGroups {\n        // Get group's project associations\n        projects, err := s.remoteClients[source].GetGroupProjects(ctx, group.ID)\n        if err != nil {\n            s.logger.Error(\"failed to get group projects\", zap.Error(err))\n            continue\n        }\n        \n        // Find or create local group\n        localGroup, err := s.findOrCreateGroup(ctx, group)\n        if err != nil {\n            s.logger.Error(\"failed to sync group\", zap.Error(err))\n            continue\n        }\n        \n        // Sync project associations\n        for _, project := range projects {\n            if err := s.syncGroupProjectAssociation(ctx, localGroup, project); err != nil {\n                s.logger.Error(\"failed to sync project association\", zap.Error(err))\n            }\n        }\n    }\n    \n    return nil\n}\n```",
+        "testStrategy": "Test group creation with project associations, permission preservation, and name-based matching. Verify group-to-project mappings are maintained correctly",
+        "priority": "high",
+        "dependencies": [
+          3,
+          4
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define OIDC Group Data Models and Interfaces",
+            "description": "Create comprehensive data structures for OIDC groups including group metadata, role definitions, permission sets, and project associations",
+            "dependencies": [],
+            "details": "Define structs for OIDCGroup, GroupRole, GroupPermission, GroupProjectAssociation in internal/models/. Include fields for group_name, group_type, ldap_group_dn, id_token_claim, and permission hierarchy levels. Create interfaces for group operations in internal/harbor/client.go",
+            "status": "done",
+            "testStrategy": "Unit tests to validate struct marshaling/unmarshaling and interface compliance"
+          },
+          {
+            "id": 2,
+            "title": "Implement Harbor API Client Methods for OIDC Groups",
+            "description": "Add methods to HarborClient for listing, creating, updating, and deleting OIDC groups, including methods for managing group-project associations",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement ListOIDCGroups, GetOIDCGroup, CreateOIDCGroup, UpdateOIDCGroup, DeleteOIDCGroup, GetGroupProjects, AddGroupToProject, RemoveGroupFromProject methods. Use Harbor's /usergroups and /projects/{project_id}/members APIs",
+            "status": "done",
+            "testStrategy": "Integration tests with mock Harbor API responses, validate API request/response handling"
+          },
+          {
+            "id": 3,
+            "title": "Create Group State Management Layer",
+            "description": "Implement state tracking for OIDC groups to maintain synchronization status, track changes, and handle group lifecycle",
+            "dependencies": [
+              1
+            ],
+            "details": "Extend StateManager to track group states including last_sync_time, sync_status, and group_checksum. Implement methods for SaveGroupState, GetGroupState, and CompareGroupStates. Store group-project mappings and permission hierarchies",
+            "status": "done",
+            "testStrategy": "Unit tests for state persistence and retrieval, test state comparison logic"
+          },
+          {
+            "id": 4,
+            "title": "Build Group Matching and Resolution Logic",
+            "description": "Implement logic to match groups across Harbor instances using name-based references and handle group identity resolution",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Create findOrCreateGroup method that matches groups by group_name and group_type. Implement logic to handle LDAP DN normalization and OIDC claim matching. Build group comparison logic that considers permission hierarchies",
+            "status": "done",
+            "testStrategy": "Unit tests with various group matching scenarios, test edge cases like name conflicts"
+          },
+          {
+            "id": 5,
+            "title": "Implement Permission Hierarchy Synchronization",
+            "description": "Build logic to synchronize group permissions while maintaining role hierarchies and inheritance rules",
+            "dependencies": [
+              4
+            ],
+            "details": "Create methods to analyze and replicate permission hierarchies. Implement role mapping between source and target (Admin, Developer, Guest, etc.). Handle permission inheritance and override scenarios. Ensure atomic permission updates",
+            "status": "done",
+            "testStrategy": "Integration tests validating permission hierarchy preservation, test role mapping accuracy"
+          },
+          {
+            "id": 6,
+            "title": "Create Project Association Synchronization",
+            "description": "Implement synchronization of group-project associations including role assignments within each project",
+            "dependencies": [
+              4,
+              5
+            ],
+            "details": "Build syncGroupProjectAssociation method that maps project names between instances, creates missing project associations, updates roles within projects, and removes obsolete associations. Handle project name resolution and validation",
+            "status": "done",
+            "testStrategy": "Integration tests for project association CRUD operations, validate role consistency"
+          },
+          {
+            "id": 7,
+            "title": "Add Conflict Resolution and Error Handling",
+            "description": "Implement comprehensive error handling and conflict resolution strategies for group synchronization scenarios",
+            "dependencies": [
+              4,
+              5,
+              6
+            ],
+            "details": "Handle scenarios like duplicate group names, conflicting permissions, missing projects, and API failures. Implement retry logic with exponential backoff. Add detailed logging for troubleshooting. Create rollback mechanisms for failed syncs",
+            "status": "done",
+            "testStrategy": "Test error scenarios including API failures, permission conflicts, and partial sync failures"
+          },
+          {
+            "id": 8,
+            "title": "Implement Batch Processing and Performance Optimization",
+            "description": "Optimize group synchronization for large-scale deployments with hundreds of groups and complex permission structures",
+            "dependencies": [
+              6,
+              7
+            ],
+            "details": "Implement batch API calls for group operations, add concurrent processing with proper synchronization, implement caching for frequently accessed group data, and add progress tracking. Include rate limiting to avoid overwhelming Harbor API",
+            "status": "done",
+            "testStrategy": "Performance tests with large datasets, measure sync times and API call efficiency"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Create Synchronization Engine",
+        "description": "Build the core synchronization orchestrator that manages sync cycles, coordinates resource synchronizers, and handles scheduling",
+        "details": "```go\n// internal/sync/engine.go\ntype SyncEngine struct {\n    config *config.Config\n    robotSync *RobotAccountSynchronizer\n    oidcSync *OIDCGroupSynchronizer\n    stateManager *state.StateManager\n    logger *zap.Logger\n    ticker *time.Ticker\n    done chan bool\n}\n\nfunc (e *SyncEngine) Start(ctx context.Context) error {\n    e.ticker = time.NewTicker(time.Duration(e.config.Replicator.SyncInterval) * time.Second)\n    e.done = make(chan bool)\n    \n    // Initial sync\n    e.runSyncCycle(ctx)\n    \n    go func() {\n        for {\n            select {\n            case <-e.ticker.C:\n                e.runSyncCycle(ctx)\n            case <-e.done:\n                return\n            case <-ctx.Done():\n                return\n            }\n        }\n    }()\n    \n    return nil\n}\n\nfunc (e *SyncEngine) runSyncCycle(ctx context.Context) {\n    e.logger.Info(\"starting sync cycle\")\n    start := time.Now()\n    \n    var wg sync.WaitGroup\n    for _, remote := range e.config.RemoteHarbors {\n        if !remote.Enabled {\n            continue\n        }\n        \n        wg.Add(1)\n        go func(source string) {\n            defer wg.Done()\n            \n            if e.config.SyncResources.SystemRobotAccounts.Enabled {\n                if err := e.robotSync.SyncSystemRobots(ctx, source); err != nil {\n                    e.logger.Error(\"failed to sync system robots\", zap.Error(err))\n                }\n            }\n            \n            if e.config.SyncResources.OIDCGroups.Enabled {\n                if err := e.oidcSync.SyncGroups(ctx, source); err != nil {\n                    e.logger.Error(\"failed to sync OIDC groups\", zap.Error(err))\n                }\n            }\n        }(remote.Name)\n    }\n    \n    wg.Wait()\n    e.logger.Info(\"sync cycle completed\", zap.Duration(\"duration\", time.Since(start)))\n}\n```",
+        "testStrategy": "Test concurrent synchronization from multiple sources, verify scheduling accuracy, test graceful shutdown, and measure sync cycle performance",
+        "priority": "high",
+        "dependencies": [
+          4,
+          5,
+          6
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Core Engine Interfaces and Types",
+            "description": "Create the foundational interfaces and types for the synchronization engine including SyncEngine struct, Synchronizer interface, and sync result types",
+            "dependencies": [],
+            "details": "Define interfaces for resource synchronizers (Synchronizer interface with Sync method), create SyncResult struct to capture sync outcomes (success count, error count, duration), define SyncContext to pass sync-specific data, and create enums for sync status states",
+            "status": "done",
+            "testStrategy": "Unit tests to verify interface implementations and type behaviors"
+          },
+          {
+            "id": 2,
+            "title": "Implement Worker Pool for Concurrent Operations",
+            "description": "Build a configurable worker pool to handle concurrent synchronization operations across multiple remote Harbor instances",
+            "dependencies": [
+              1
+            ],
+            "details": "Create WorkerPool struct with configurable size, implement job queue using channels, add rate limiting per remote instance, include context cancellation support, and implement graceful shutdown mechanism",
+            "status": "done",
+            "testStrategy": "Test concurrent job execution, verify rate limiting, and test graceful shutdown scenarios"
+          },
+          {
+            "id": 3,
+            "title": "Create Sync Scheduler Component",
+            "description": "Implement the scheduling mechanism that triggers sync cycles based on configured intervals and handles dynamic schedule updates",
+            "dependencies": [
+              1
+            ],
+            "details": "Build Scheduler struct with ticker management, support for immediate sync triggers, implement schedule update without restart, add jitter to prevent thundering herd, and include next run time calculation",
+            "status": "done",
+            "testStrategy": "Test scheduled executions, verify interval changes, and test immediate trigger functionality"
+          },
+          {
+            "id": 4,
+            "title": "Build Sync Orchestrator Logic",
+            "description": "Implement the core orchestration logic that coordinates different resource synchronizers and manages sync cycles",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Create runSyncCycle method with proper error handling, implement parallel sync for multiple remotes using worker pool, add sync cycle ID generation for tracking, implement pre and post sync hooks, and add circuit breaker pattern for failing remotes",
+            "status": "done",
+            "testStrategy": "Test orchestration flow, verify parallel execution, and test error scenarios"
+          },
+          {
+            "id": 5,
+            "title": "Implement Sync Progress Tracking",
+            "description": "Add real-time progress tracking and reporting capabilities for ongoing synchronization operations",
+            "dependencies": [
+              4
+            ],
+            "details": "Create SyncProgress struct with current state tracking, implement progress updates via channels, add ETA calculation based on historical data, create progress aggregation for multiple resources, and implement progress persistence for recovery",
+            "status": "done",
+            "testStrategy": "Test progress updates during sync, verify ETA calculations, and test recovery scenarios"
+          },
+          {
+            "id": 6,
+            "title": "Add Metrics and Monitoring Integration",
+            "description": "Integrate comprehensive metrics collection and monitoring capabilities into the sync engine",
+            "dependencies": [
+              4,
+              5
+            ],
+            "details": "Add Prometheus metrics for sync duration, success/failure counts, and queue depth, implement health check endpoint, create custom metrics for each resource type, add alerting thresholds configuration, and include sync lag measurement",
+            "status": "done",
+            "testStrategy": "Verify metrics are correctly exposed, test threshold alerts, and validate metric accuracy"
+          },
+          {
+            "id": 7,
+            "title": "Implement Engine Lifecycle Management",
+            "description": "Build complete lifecycle management including initialization, startup, shutdown, and error recovery mechanisms",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "Implement Start method with dependency validation, create Stop method with graceful shutdown, add Restart capability without data loss, implement health checks for dependencies, and add automatic recovery from transient failures",
+            "status": "done",
+            "testStrategy": "Test startup/shutdown sequences, verify graceful handling of in-flight operations, and test recovery mechanisms"
+          },
+          {
+            "id": 8,
+            "title": "Create Engine Configuration and Validation",
+            "description": "Implement comprehensive configuration management and validation for the sync engine with hot-reload support",
+            "dependencies": [
+              7
+            ],
+            "details": "Build configuration validation for sync intervals and worker counts, implement configuration hot-reload without restart, add configuration versioning support, create sensible defaults with override capability, and implement configuration change notifications",
+            "status": "done",
+            "testStrategy": "Test configuration validation rules, verify hot-reload functionality, and test invalid configuration handling"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Implement Monitoring and Metrics",
+        "description": "Set up Prometheus metrics collection and expose metrics endpoint for monitoring synchronization operations",
+        "details": "```go\n// internal/monitoring/metrics.go\nvar (\n    syncTotal = prometheus.NewCounterVec(\n        prometheus.CounterOpts{\n            Name: \"harbor_replicator_sync_total\",\n            Help: \"Total number of synchronization cycles\",\n        },\n        []string{\"status\"},\n    )\n    \n    resourcesSynced = prometheus.NewCounterVec(\n        prometheus.CounterOpts{\n            Name: \"harbor_replicator_resources_synced\",\n            Help: \"Total resources synchronized\",\n        },\n        []string{\"type\", \"source\", \"operation\"},\n    )\n    \n    syncDuration = prometheus.NewHistogramVec(\n        prometheus.HistogramOpts{\n            Name: \"harbor_replicator_sync_duration_seconds\",\n            Help: \"Duration of sync operations\",\n            Buckets: prometheus.DefBuckets,\n        },\n        []string{\"source\", \"resource_type\"},\n    )\n)\n\nfunc init() {\n    prometheus.MustRegister(syncTotal, resourcesSynced, syncDuration)\n}\n\nfunc SetupMetricsServer(port int) *http.Server {\n    mux := http.NewServeMux()\n    mux.Handle(\"/metrics\", promhttp.Handler())\n    \n    server := &http.Server{\n        Addr: fmt.Sprintf(\":%d\", port),\n        Handler: mux,\n    }\n    \n    go func() {\n        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {\n            log.Fatalf(\"metrics server failed: %v\", err)\n        }\n    }()\n    \n    return server\n}\n```",
+        "testStrategy": "Verify all metrics are properly registered and incremented, test metric labels are correct, ensure metrics endpoint returns valid Prometheus format",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          7
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Core Metrics Structure",
+            "description": "Create comprehensive metrics definitions for all synchronization operations including counters, gauges, and histograms",
+            "dependencies": [],
+            "details": "Extend the existing metrics.go to include additional metrics: sync errors counter with error type labels, active sync operations gauge, resource queue size gauge, API call latency histogram, and last successful sync timestamp gauge. Define proper metric naming conventions following Prometheus best practices with harbor_replicator_ prefix.",
+            "status": "done",
+            "testStrategy": "Unit test metric registration and ensure all metrics can be incremented/observed without panics"
+          },
+          {
+            "id": 2,
+            "title": "Implement Metrics Collection Interface",
+            "description": "Create a metrics collector interface that can be injected into sync operations to track metrics",
+            "dependencies": [
+              1
+            ],
+            "details": "Design MetricsCollector interface with methods like RecordSyncStart(), RecordSyncComplete(), RecordResourceSynced(), RecordError(). Implement PrometheusCollector that updates the defined Prometheus metrics. Include context propagation for tracking operation metadata.",
+            "status": "done",
+            "testStrategy": "Mock the interface in tests and verify correct metric updates for various scenarios"
+          },
+          {
+            "id": 3,
+            "title": "Integrate Metrics into Sync Operations",
+            "description": "Instrument all synchronization operations with metrics collection calls",
+            "dependencies": [
+              2
+            ],
+            "details": "Modify sync package to accept MetricsCollector, add timing measurements around sync operations, track resource counts by type and operation (create/update/delete), record errors with proper labels, and update queue size metrics. Ensure metrics are collected at appropriate granularity without impacting performance.",
+            "status": "done",
+            "testStrategy": "Integration tests verifying metrics are updated correctly during sync operations"
+          },
+          {
+            "id": 4,
+            "title": "Create Custom Metrics Registry",
+            "description": "Implement a custom registry for application-specific metrics and health indicators",
+            "dependencies": [
+              1
+            ],
+            "details": "Build a registry that tracks Harbor instance health, replication lag metrics, configuration drift detection, and resource quota usage. Include methods to expose these as Prometheus metrics and provide a summary endpoint for quick health checks.",
+            "status": "done",
+            "testStrategy": "Test registry updates under concurrent access and verify metric accuracy"
+          },
+          {
+            "id": 5,
+            "title": "Setup HTTP Metrics Server",
+            "description": "Implement the HTTP server to expose Prometheus metrics endpoint with proper security and configuration",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Enhance SetupMetricsServer to include graceful shutdown, configurable bind address, optional TLS support, basic authentication if needed, and health/readiness endpoints. Add middleware for request logging and panic recovery. Ensure server lifecycle is properly managed.",
+            "status": "done",
+            "testStrategy": "Test server startup/shutdown, verify metrics endpoint accessibility, and load test the endpoint"
+          },
+          {
+            "id": 6,
+            "title": "Add Metrics Dashboard Configuration",
+            "description": "Create Grafana dashboard configuration and alerting rules for the exposed metrics",
+            "dependencies": [
+              5
+            ],
+            "details": "Generate Grafana dashboard JSON with panels for sync success rate, resource synchronization trends, error rates by type, performance metrics, and queue depths. Include Prometheus alerting rules for sync failures, high error rates, and performance degradation. Document metric meanings and thresholds.",
+            "status": "done",
+            "testStrategy": "Import dashboard into test Grafana instance and verify all panels display correctly with sample data"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Implement Health and Readiness Endpoints",
+        "description": "Create HTTP endpoints for health checks and readiness probes compatible with Kubernetes deployments",
+        "details": "```go\n// internal/monitoring/health.go\ntype HealthServer struct {\n    engine *sync.SyncEngine\n    stateManager *state.StateManager\n    startTime time.Time\n    logger *zap.Logger\n}\n\nfunc (h *HealthServer) SetupRoutes() *gin.Engine {\n    router := gin.New()\n    router.Use(gin.Recovery())\n    \n    router.GET(\"/health\", h.healthHandler)\n    router.GET(\"/ready\", h.readyHandler)\n    \n    return router\n}\n\nfunc (h *HealthServer) healthHandler(c *gin.Context) {\n    uptime := time.Since(h.startTime).Seconds()\n    \n    c.JSON(http.StatusOK, gin.H{\n        \"status\": \"healthy\",\n        \"version\": \"1.0.0\",\n        \"uptime\": uptime,\n    })\n}\n\nfunc (h *HealthServer) readyHandler(c *gin.Context) {\n    // Check if sync engine is ready\n    ready := h.engine.IsReady()\n    lastSync := h.stateManager.GetLastSyncTime()\n    sourcesConnected := h.engine.GetConnectedSources()\n    \n    if !ready {\n        c.JSON(http.StatusServiceUnavailable, gin.H{\n            \"ready\": false,\n            \"reason\": \"sync engine not ready\",\n        })\n        return\n    }\n    \n    c.JSON(http.StatusOK, gin.H{\n        \"ready\": true,\n        \"last_sync\": lastSync,\n        \"sources_connected\": sourcesConnected,\n    })\n}\n```",
+        "testStrategy": "Test health endpoint always returns 200 OK, test readiness endpoint returns 503 when not ready, verify JSON response format matches specification",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          7
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Health Check Service Structure",
+            "description": "Set up the base health check service with proper initialization, configuration, and dependency injection for monitoring various system components",
+            "dependencies": [],
+            "details": "Create HealthServer struct in internal/monitoring/health.go with fields for sync engine, state manager, logger, and configuration. Implement NewHealthServer constructor that accepts dependencies and initializes the service with proper defaults. Add configuration structure for health check intervals, timeouts, and thresholds. Include fields for tracking component health states and last check timestamps.",
+            "status": "done",
+            "testStrategy": "Write unit tests to verify proper initialization of HealthServer with mock dependencies. Test that all required fields are properly set and configuration is correctly applied."
+          },
+          {
+            "id": 2,
+            "title": "Implement Component Health Checkers",
+            "description": "Create individual health check functions for each critical system component including database connections, sync engine status, and external service connectivity",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement checkDatabaseHealth() to verify database connectivity and query execution. Create checkSyncEngineHealth() to validate sync engine state, active workers, and queue status. Add checkExternalServicesHealth() for checking connectivity to external APIs or services. Each checker should return a ComponentHealth struct with status (healthy/unhealthy/degraded), last check time, error message if any, and relevant metrics. Implement timeout handling for each check to prevent hanging.",
+            "status": "done",
+            "testStrategy": "Create unit tests with mocked components to test each health checker in isolation. Test timeout scenarios, connection failures, and degraded states. Verify proper error handling and status reporting."
+          },
+          {
+            "id": 3,
+            "title": "Build Health Endpoint Handler",
+            "description": "Implement the /health endpoint that performs basic liveness checks and returns overall system health status with detailed component information",
+            "dependencies": [
+              2
+            ],
+            "details": "Create healthHandler that executes all component health checks concurrently using goroutines. Aggregate results to determine overall health status (healthy if all components healthy, degraded if some unhealthy, unhealthy if critical components fail). Return JSON response with overall status, individual component statuses, version info, uptime, and timestamp. Include response caching to prevent excessive health checks. Set appropriate HTTP status codes (200 for healthy/degraded, 503 for unhealthy).",
+            "status": "done",
+            "testStrategy": "Write integration tests that mock various component states and verify correct aggregation logic. Test concurrent execution and timeout handling. Verify response format and HTTP status codes for different scenarios."
+          },
+          {
+            "id": 4,
+            "title": "Build Readiness Endpoint Handler",
+            "description": "Implement the /ready endpoint that checks if the application is ready to serve traffic, including verification of critical dependencies and initialization state",
+            "dependencies": [
+              2
+            ],
+            "details": "Create readyHandler that checks if sync engine is initialized and ready to process requests. Verify database schema migrations are complete and connections are established. Check if minimum number of sync workers are running. Validate that state manager is initialized with valid state. Include checks for required external service connections. Return detailed readiness status with specific failure reasons if not ready. Implement grace period after startup before reporting ready.",
+            "status": "done",
+            "testStrategy": "Test readiness checks during various startup phases. Verify that endpoint correctly reports not ready during initialization and ready once all components are operational. Test edge cases like partial initialization failures."
+          },
+          {
+            "id": 5,
+            "title": "Configure HTTP Server and Kubernetes Integration",
+            "description": "Set up the HTTP server for health endpoints with proper routing, middleware, and Kubernetes-compatible configuration including probe settings",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Configure Gin router with health and readiness endpoints on a separate port (e.g., 8080) from main application. Add middleware for request logging, panic recovery, and timeout handling. Implement graceful shutdown handling that updates health status during shutdown. Add Prometheus metrics for health check results and latencies. Create Kubernetes deployment manifests with proper liveness and readiness probe configurations including initialDelaySeconds, periodSeconds, timeoutSeconds, and failureThreshold. Document recommended probe settings for different deployment scenarios.",
+            "status": "done",
+            "testStrategy": "Test HTTP server startup and shutdown sequences. Verify middleware functionality and error handling. Test with actual Kubernetes probes using minikube or kind. Validate graceful shutdown behavior and metric collection."
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Implement Structured Logging",
+        "description": "Set up structured logging using zap with proper log levels, JSON formatting, and contextual information",
+        "details": "```go\n// internal/logging/logger.go\nfunc NewLogger(config config.LoggingConfig) (*zap.Logger, error) {\n    var zapConfig zap.Config\n    \n    switch config.Level {\n    case \"debug\":\n        zapConfig = zap.NewDevelopmentConfig()\n    case \"info\", \"warn\", \"error\":\n        zapConfig = zap.NewProductionConfig()\n        zapConfig.Level = zap.NewAtomicLevelAt(getZapLevel(config.Level))\n    default:\n        return nil, fmt.Errorf(\"invalid log level: %s\", config.Level)\n    }\n    \n    if config.Format == \"json\" {\n        zapConfig.Encoding = \"json\"\n    } else {\n        zapConfig.Encoding = \"console\"\n    }\n    \n    // Never log sensitive information\n    zapConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder\n    \n    logger, err := zapConfig.Build(\n        zap.AddCaller(),\n        zap.AddStacktrace(zapcore.ErrorLevel),\n    )\n    if err != nil {\n        return nil, err\n    }\n    \n    return logger, nil\n}\n\n// Wrapper to ensure no sensitive data is logged\nfunc SafeLog(logger *zap.Logger, msg string, fields ...zap.Field) {\n    sanitizedFields := make([]zap.Field, 0, len(fields))\n    for _, field := range fields {\n        if !isSensitiveField(field.Key) {\n            sanitizedFields = append(sanitizedFields, field)\n        }\n    }\n    logger.Info(msg, sanitizedFields...)\n}\n```",
+        "testStrategy": "Verify log levels work correctly, test JSON and console output formats, ensure sensitive data (passwords, tokens) are never logged, test correlation ID propagation",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Logger Configuration Structure",
+            "description": "Define configuration structures for the logging system including log levels, output formats, and sampling configurations",
+            "dependencies": [],
+            "details": "Create a config package with LoggingConfig struct containing fields for Level (debug/info/warn/error), Format (json/console), OutputPath (stdout/file path), ErrorOutputPath, Sampling configuration (initial, thereafter), and MaxSize/MaxBackups for log rotation. Include validation methods to ensure configuration values are valid.",
+            "status": "done",
+            "testStrategy": "Write unit tests to validate configuration parsing, default values, and validation logic for invalid configurations"
+          },
+          {
+            "id": 2,
+            "title": "Implement Core Logger Factory",
+            "description": "Create the NewLogger function that builds zap logger instances based on configuration with proper encoding, level settings, and core options",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement NewLogger function in internal/logging/logger.go that accepts LoggingConfig, sets up appropriate zap.Config based on environment (development vs production), configures JSON or console encoding, adds caller information, stack traces for errors, and sampling to prevent log flooding. Include helper function getZapLevel to convert string levels to zap.AtomicLevel.",
+            "status": "done",
+            "testStrategy": "Test logger creation with different configurations, verify log output format matches expectations, and ensure proper level filtering"
+          },
+          {
+            "id": 3,
+            "title": "Build Sensitive Data Filter",
+            "description": "Implement SafeLog wrapper and field sanitization to prevent logging of sensitive information like passwords, tokens, and personal data",
+            "dependencies": [
+              2
+            ],
+            "details": "Create isSensitiveField function that checks field keys against a list of sensitive patterns (password, token, secret, key, authorization, etc.). Implement SafeLog wrapper that filters out sensitive fields before logging. Add field redaction logic that replaces sensitive values with '[REDACTED]' instead of completely removing fields for better debugging.",
+            "status": "done",
+            "testStrategy": "Test with various sensitive field names and values, verify redaction works correctly, and ensure non-sensitive fields pass through unchanged"
+          },
+          {
+            "id": 4,
+            "title": "Add Correlation ID Support",
+            "description": "Implement correlation ID generation and propagation for tracking requests and operations across the system",
+            "dependencies": [
+              2
+            ],
+            "details": "Create middleware package with correlation ID generator using UUID v4. Implement WithCorrelationID function that adds correlation ID to logger context. Create HTTP middleware that extracts or generates correlation IDs from X-Correlation-ID header and adds to request context. Add helper functions to retrieve logger with correlation ID from context.",
+            "status": "done",
+            "testStrategy": "Test correlation ID generation, propagation through HTTP requests, and presence in log output across multiple log statements"
+          },
+          {
+            "id": 5,
+            "title": "Create Contextual Logger Helpers",
+            "description": "Build helper functions for adding common contextual information to logs such as user ID, request ID, operation name, and duration",
+            "dependencies": [
+              2,
+              4
+            ],
+            "details": "Implement WithContext function that extracts common fields from context (user ID, tenant ID, request ID). Create WithFields helper for adding multiple fields at once. Add WithError helper for consistent error logging with stack traces. Implement operation timing helpers (StartOperation/EndOperation) that log duration automatically. Include request/response logging helpers with size and status information.",
+            "status": "done",
+            "testStrategy": "Verify contextual information appears in logs correctly, test timing calculations, and ensure helpers work with various data types"
+          },
+          {
+            "id": 6,
+            "title": "Implement Log Rotation and Management",
+            "description": "Add log rotation capabilities and implement cleanup policies to manage disk space and log retention",
+            "dependencies": [
+              2
+            ],
+            "details": "Integrate lumberjack for file rotation with configurable MaxSize, MaxBackups, MaxAge, and Compress options. Create log sink that writes to both file and stdout based on configuration. Implement graceful shutdown that flushes buffered logs. Add performance metrics collection for logging operations (logs per second, dropped logs). Create cleanup goroutine for old compressed logs based on retention policy.",
+            "status": "done",
+            "testStrategy": "Test log rotation triggers at correct file sizes, verify old logs are cleaned up according to policy, and ensure no log loss during rotation"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Build Error Handling and Retry Logic",
+        "description": "Implement comprehensive error handling with exponential backoff, circuit breakers, and partial failure recovery",
+        "details": "```go\n// internal/sync/retry.go\ntype RetryConfig struct {\n    MaxRetries int\n    InitialDelay time.Duration\n    MaxDelay time.Duration\n    Multiplier float64\n}\n\nfunc WithRetry(ctx context.Context, config RetryConfig, operation func() error) error {\n    var lastErr error\n    delay := config.InitialDelay\n    \n    for attempt := 0; attempt <= config.MaxRetries; attempt++ {\n        if err := operation(); err != nil {\n            lastErr = err\n            \n            if !isRetryable(err) {\n                return err\n            }\n            \n            if attempt < config.MaxRetries {\n                select {\n                case <-time.After(delay):\n                    delay = time.Duration(float64(delay) * config.Multiplier)\n                    if delay > config.MaxDelay {\n                        delay = config.MaxDelay\n                    }\n                case <-ctx.Done():\n                    return ctx.Err()\n                }\n            }\n        } else {\n            return nil\n        }\n    }\n    \n    return fmt.Errorf(\"max retries exceeded: %w\", lastErr)\n}\n\nfunc isRetryable(err error) bool {\n    // Check for network errors, 5xx status codes, etc.\n    var netErr net.Error\n    if errors.As(err, &netErr) && netErr.Temporary() {\n        return true\n    }\n    \n    // Add more retryable error checks\n    return false\n}\n```",
+        "testStrategy": "Test exponential backoff timing, verify non-retryable errors fail immediately, test context cancellation during retry, measure retry performance impact",
+        "priority": "high",
+        "dependencies": [
+          3,
+          7
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Error Categories and Classification System",
+            "description": "Create a comprehensive error classification system that categorizes errors as retryable (transient) or non-retryable (permanent), including custom error types and interfaces",
+            "dependencies": [],
+            "details": "Create error types for: network timeouts, rate limiting, service unavailable (503), database connection errors, authentication failures, validation errors, and business logic errors. Implement an ErrorClassifier interface with methods to determine retry eligibility, extract status codes, and identify error categories. Include error wrapping utilities to preserve context while maintaining classification.",
+            "status": "done",
+            "testStrategy": "Unit test each error type classification, verify error wrapping preserves original error information, test edge cases like nil errors and unknown error types"
+          },
+          {
+            "id": 2,
+            "title": "Implement Enhanced Retry Configuration and Jitter",
+            "description": "Extend the existing RetryConfig to include jitter for avoiding thundering herd, retry predicates, and per-operation customization options",
+            "dependencies": [
+              1
+            ],
+            "details": "Add jitter calculation to prevent synchronized retries across multiple clients. Implement retry predicates that can inspect error types and response codes. Add configuration for retry-after header support, custom backoff strategies (linear, exponential, fibonacci), and operation-specific retry policies. Include context deadline awareness to avoid retrying beyond request timeout.",
+            "status": "done",
+            "testStrategy": "Test jitter distribution across multiple retry attempts, verify backoff calculations with different strategies, ensure context cancellation stops retries immediately"
+          },
+          {
+            "id": 3,
+            "title": "Build Circuit Breaker Implementation",
+            "description": "Create a circuit breaker pattern implementation with configurable thresholds, half-open state testing, and automatic recovery",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement three states: closed (normal operation), open (failing fast), and half-open (testing recovery). Configure failure threshold percentage, minimum request volume, timeout duration, and success threshold for recovery. Use sliding window for tracking request outcomes. Include metrics collection for monitoring circuit state transitions and failure rates.",
+            "status": "done",
+            "testStrategy": "Test state transitions under various failure scenarios, verify half-open state allows limited requests, test automatic recovery after timeout period"
+          },
+          {
+            "id": 4,
+            "title": "Create Partial Failure Recovery Manager",
+            "description": "Implement mechanisms to handle partial failures in batch operations, including rollback strategies and compensation logic",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Build a transaction log for tracking partial completions in batch operations. Implement checkpoint-based recovery for resumable operations. Create compensation handlers for reversing partially completed operations. Add support for idempotency keys to prevent duplicate processing during retries. Include progress tracking and partial result aggregation.",
+            "status": "done",
+            "testStrategy": "Test recovery from failures at different points in batch processing, verify idempotency prevents duplicate operations, test compensation logic reverses partial changes correctly"
+          },
+          {
+            "id": 5,
+            "title": "Develop Retry Metrics and Observability",
+            "description": "Implement comprehensive metrics collection for retry attempts, circuit breaker states, and error patterns to enable monitoring and alerting",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Track metrics including: retry attempt counts by error type, retry success/failure rates, circuit breaker state changes and trip reasons, latency impact of retries, and error frequency patterns. Implement OpenTelemetry integration for distributed tracing of retry chains. Add structured logging with correlation IDs for debugging retry sequences.",
+            "status": "done",
+            "testStrategy": "Verify metrics are accurately recorded for all retry scenarios, test trace propagation across retry attempts, ensure no performance degradation from metrics collection"
+          },
+          {
+            "id": 6,
+            "title": "Build Adaptive Retry Strategy Engine",
+            "description": "Create an intelligent retry system that adapts retry behavior based on historical success rates and system load",
+            "dependencies": [
+              2,
+              3,
+              5
+            ],
+            "details": "Implement machine learning-inspired algorithms to adjust retry parameters dynamically. Track success rates per error type and endpoint. Reduce retry aggressiveness during high load periods. Implement token bucket rate limiting for retry attempts. Add priority-based retry queuing for critical operations. Include feedback loops from circuit breaker states to influence retry decisions.",
+            "status": "done",
+            "testStrategy": "Test adaptation under varying load conditions, verify retry reduction during system stress, test priority queue ordering under concurrent operations"
+          },
+          {
+            "id": 7,
+            "title": "Create Integration Layer and Middleware",
+            "description": "Build HTTP middleware and gRPC interceptors that automatically apply retry logic, circuit breakers, and error handling to all outbound requests",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              6
+            ],
+            "details": "Implement HTTP RoundTripper wrapper with automatic retry and circuit breaker integration. Create gRPC unary and streaming interceptors with retry support. Add configuration hot-reloading for runtime adjustment of retry policies. Implement request hedging for latency-sensitive operations. Include distributed circuit breaker coordination using Redis or similar for multi-instance deployments.",
+            "status": "done",
+            "testStrategy": "Integration test with real HTTP/gRPC services, test configuration changes without service restart, verify distributed circuit breaker coordination across multiple instances"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Create Docker Image and Compose Configuration",
+        "description": "Build multi-stage Dockerfile for the application and create Docker Compose configuration for local deployment",
+        "details": "```dockerfile\n# Dockerfile\n# Build stage\nFROM golang:1.21-alpine AS builder\n\nRUN apk add --no-cache git ca-certificates\n\nWORKDIR /app\n\nCOPY go.mod go.sum ./\nRUN go mod download\n\nCOPY . .\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o harbor-replicator ./cmd/replicator\n\n# Final stage\nFROM alpine:3.19\n\nRUN apk --no-cache add ca-certificates tzdata\n\nWORKDIR /app\n\nCOPY --from=builder /app/harbor-replicator .\nCOPY config/replicator.yaml /config/replicator.yaml\n\nEXPOSE 8080 9090\n\nUSER 1000:1000\n\nENTRYPOINT [\"./harbor-replicator\"]\nCMD [\"--config\", \"/config/replicator.yaml\"]\n```\n\nCreate docker-compose.yaml as specified in PRD with proper volume mounts, environment variables, and network configuration",
+        "testStrategy": "Build Docker image and verify it runs, test volume mounts work correctly, verify environment variable substitution, test container health checks",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          7,
+          8,
+          9
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Create Kubernetes Manifests",
+        "description": "Develop complete Kubernetes deployment manifests including Deployment, Service, ConfigMap, Secret, and PVC resources",
+        "details": "Create Kubernetes manifests as specified in PRD:\n- Deployment with proper resource limits and health checks\n- Service for metrics and health endpoints\n- ConfigMap for application configuration\n- Secret for Harbor credentials\n- PersistentVolumeClaim for state storage\n\nAdd additional resources:\n```yaml\n# ServiceMonitor for Prometheus Operator\napiVersion: monitoring.coreos.com/v1\nkind: ServiceMonitor\nmetadata:\n  name: harbor-replicator\n  namespace: harbor\nspec:\n  selector:\n    matchLabels:\n      app: harbor-replicator\n  endpoints:\n  - port: metrics\n    interval: 30s\n    path: /metrics\n```\n\nImplement Helm chart structure for easier deployment:\n```\nharbor-replicator/\n├── Chart.yaml\n├── values.yaml\n└── templates/\n    ├── deployment.yaml\n    ├── service.yaml\n    ├── configmap.yaml\n    ├── secret.yaml\n    └── pvc.yaml\n```",
+        "testStrategy": "Deploy to test Kubernetes cluster, verify all resources are created correctly, test pod restarts maintain state, verify metrics are scraped by Prometheus",
+        "priority": "medium",
+        "dependencies": [
+          12
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Implement Integration Tests",
+        "description": "Create comprehensive integration tests that verify end-to-end synchronization flows against real Harbor instances",
+        "details": "```go\n// test/integration/sync_test.go\nfunc TestFullSynchronizationFlow(t *testing.T) {\n    // Setup test Harbor instances using testcontainers\n    ctx := context.Background()\n    \n    localHarbor := setupTestHarbor(t, \"local\")\n    remoteHarbor := setupTestHarbor(t, \"remote\")\n    \n    // Create test resources in remote Harbor\n    remoteClient := createTestClient(remoteHarbor)\n    testRobot := createTestRobotAccount(t, remoteClient)\n    testGroup := createTestOIDCGroup(t, remoteClient)\n    \n    // Configure and start replicator\n    config := &config.Config{\n        LocalHarbor: getHarborConfig(localHarbor),\n        RemoteHarbors: []config.RemoteHarborConfig{\n            getHarborConfig(remoteHarbor),\n        },\n    }\n    \n    engine := setupSyncEngine(t, config)\n    require.NoError(t, engine.Start(ctx))\n    \n    // Wait for sync to complete\n    time.Sleep(5 * time.Second)\n    \n    // Verify resources exist in local Harbor\n    localClient := createTestClient(localHarbor)\n    \n    robots, err := localClient.ListSystemRobotAccounts(ctx)\n    require.NoError(t, err)\n    assert.Contains(t, getRobotNames(robots), testRobot.Name)\n    \n    groups, err := localClient.ListOIDCGroups(ctx)\n    require.NoError(t, err)\n    assert.Contains(t, getGroupNames(groups), testGroup.Name)\n}\n```\n\nCreate performance tests to verify sync completes within SLA for 1000+ resources",
+        "testStrategy": "Run integration tests in CI/CD pipeline, use testcontainers for Harbor instances, measure sync performance metrics, test failure scenarios and recovery",
+        "priority": "high",
+        "dependencies": [
+          5,
+          6,
+          7
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "Create Documentation and CI/CD Pipeline",
+        "description": "Write comprehensive documentation including README, API docs, deployment guides, and set up CI/CD pipeline for automated testing and releases",
+        "details": "Create documentation:\n```markdown\n# README.md\n# Harbor Registry Replicator\n\n## Overview\nHarbor Registry Replicator synchronizes robot accounts and OIDC groups...\n\n## Quick Start\n### Docker\n```bash\ndocker-compose up -d\n```\n\n### Kubernetes\n```bash\nkubectl apply -f deployments/kubernetes/\n```\n\n## Configuration\n[Detailed configuration guide]\n\n## Monitoring\n[Metrics and alerting setup]\n```\n\nCreate CI/CD pipeline (.github/workflows/ci.yaml):\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v3\n    - uses: actions/setup-go@v4\n      with:\n        go-version: '1.21'\n    - run: make test\n    - run: make lint\n    - run: make build\n    \n  integration:\n    runs-on: ubuntu-latest\n    services:\n      harbor:\n        image: goharbor/harbor-core:latest\n    steps:\n    - run: make integration-test\n    \n  release:\n    if: startsWith(github.ref, 'refs/tags/')\n    runs-on: ubuntu-latest\n    steps:\n    - run: make docker-build\n    - run: make docker-push\n```",
+        "testStrategy": "Verify documentation is accurate and complete, test all code examples work, ensure CI/CD pipeline catches failures, test release process creates proper artifacts",
+        "priority": "medium",
+        "dependencies": [
+          14
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2025-06-15T13:17:10.936Z",
+      "updated": "2025-06-15T13:17:10.945Z",
+      "description": "Tasks for master context"
     }
-  ]
+  }
 }

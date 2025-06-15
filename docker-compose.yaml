@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  harbor-replicator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: harbor-replicator
+    restart: unless-stopped
+    environment:
+      # Harbor Source Configuration
+      HARBOR_SOURCE_URL: "${HARBOR_SOURCE_URL:-http://harbor-source.example.com}"
+      HARBOR_SOURCE_USERNAME: "${HARBOR_SOURCE_USERNAME:-admin}"
+      HARBOR_SOURCE_PASSWORD: "${HARBOR_SOURCE_PASSWORD:-Harbor12345}"
+      
+      # Harbor Target Configuration
+      HARBOR_TARGET_PROD_URL: "${HARBOR_TARGET_PROD_URL:-http://harbor-prod.example.com}"
+      HARBOR_TARGET_PROD_USERNAME: "${HARBOR_TARGET_PROD_USERNAME:-admin}"
+      HARBOR_TARGET_PROD_PASSWORD: "${HARBOR_TARGET_PROD_PASSWORD:-Harbor12345}"
+      
+      HARBOR_TARGET_STAGING_URL: "${HARBOR_TARGET_STAGING_URL:-http://harbor-staging.example.com}"
+      HARBOR_TARGET_STAGING_USERNAME: "${HARBOR_TARGET_STAGING_USERNAME:-admin}"
+      HARBOR_TARGET_STAGING_PASSWORD: "${HARBOR_TARGET_STAGING_PASSWORD:-Harbor12345}"
+      
+      # Application Configuration
+      LOG_FILE_PATH: "/app/logs/harbor-replicator.log"
+      STATE_FILE_PATH: "/app/state/replicator-state.json"
+      
+      # TLS Configuration (if needed)
+      TLS_CERT_FILE: "/app/certs/server.crt"
+      TLS_KEY_FILE: "/app/certs/server.key"
+    ports:
+      - "8080:8080"  # Health endpoints
+      - "9090:9090"  # Metrics endpoint
+    volumes:
+      # Configuration
+      - ./configs:/app/configs:ro
+      # State persistence
+      - harbor-replicator-state:/app/state
+      # Logs
+      - harbor-replicator-logs:/app/logs
+      # TLS certificates (if needed)
+      - ./certs:/app/certs:ro
+    networks:
+      - harbor-replicator-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis for state management (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: harbor-replicator-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+    ports:
+      - "6379:6379"
+    volumes:
+      - harbor-replicator-redis-data:/data
+    networks:
+      - harbor-replicator-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: >
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes
+        else
+          redis-server --appendonly yes
+        fi
+      '
+
+  # Prometheus (optional - for monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: harbor-replicator-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./configs/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/monitoring/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - harbor-replicator-prometheus-data:/prometheus
+    networks:
+      - harbor-replicator-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+
+  # Grafana (optional - for visualization)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: harbor-replicator-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource"
+    ports:
+      - "3000:3000"
+    volumes:
+      - harbor-replicator-grafana-data:/var/lib/grafana
+      - ./configs/monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/harbor-replicator.json:ro
+    networks:
+      - harbor-replicator-network
+    depends_on:
+      - prometheus
+
+volumes:
+  harbor-replicator-state:
+    driver: local
+  harbor-replicator-logs:
+    driver: local
+  harbor-replicator-redis-data:
+    driver: local
+  harbor-replicator-prometheus-data:
+    driver: local
+  harbor-replicator-grafana-data:
+    driver: local
+
+networks:
+  harbor-replicator-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  harbor-replicator-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: harbor-replicator-dev
+    restart: unless-stopped
+    environment:
+      # Development mode
+      GO_ENV: development
+      
+      # Harbor Source Configuration
+      HARBOR_SOURCE_URL: "${HARBOR_SOURCE_URL:-http://harbor-source.example.com}"
+      HARBOR_SOURCE_USERNAME: "${HARBOR_SOURCE_USERNAME:-admin}"
+      HARBOR_SOURCE_PASSWORD: "${HARBOR_SOURCE_PASSWORD:-Harbor12345}"
+      
+      # Harbor Target Configuration
+      HARBOR_TARGET_PROD_URL: "${HARBOR_TARGET_PROD_URL:-http://harbor-prod.example.com}"
+      HARBOR_TARGET_PROD_USERNAME: "${HARBOR_TARGET_PROD_USERNAME:-admin}"
+      HARBOR_TARGET_PROD_PASSWORD: "${HARBOR_TARGET_PROD_PASSWORD:-Harbor12345}"
+      
+      # Application Configuration
+      LOG_FILE_PATH: "/app/logs/harbor-replicator.log"
+      STATE_FILE_PATH: "/app/state/replicator-state.json"
+    ports:
+      - "8080:8080"  # Health endpoints
+      - "9090:9090"  # Metrics endpoint
+      - "2345:2345"  # Delve debugger
+    volumes:
+      # Source code for hot reload
+      - .:/app
+      # Separate volumes for data persistence
+      - harbor-replicator-dev-state:/app/state
+      - harbor-replicator-dev-logs:/app/logs
+      - harbor-replicator-dev-tmp:/app/tmp
+    networks:
+      - harbor-replicator-dev-network
+    stdin_open: true
+    tty: true
+    depends_on:
+      - redis-dev
+
+  # Redis for development
+  redis-dev:
+    image: redis:7-alpine
+    container_name: harbor-replicator-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - harbor-replicator-dev-redis-data:/data
+    networks:
+      - harbor-replicator-dev-network
+    command: redis-server --appendonly yes
+
+volumes:
+  harbor-replicator-dev-state:
+    driver: local
+  harbor-replicator-dev-logs:
+    driver: local
+  harbor-replicator-dev-tmp:
+    driver: local
+  harbor-replicator-dev-redis-data:
+    driver: local
+
+networks:
+  harbor-replicator-dev-network:
+    driver: bridge
